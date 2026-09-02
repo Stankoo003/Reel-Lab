@@ -56,7 +56,7 @@ export default function SignupScreen() {
     setSubmitting(true);
     try {
       await signUp(username.trim(), email.trim(), password);
-      // The gate in app/_layout.tsx moves on the session, so there is nothing to navigate.
+      // The gate in app/_layout.tsx redirects to the feed as soon as the session exists.
     } catch (e) {
       if (e instanceof ValidationError && Object.keys(e.fields).length > 0) {
         setFieldErrors(e.fields);

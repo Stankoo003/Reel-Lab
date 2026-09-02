@@ -70,9 +70,24 @@ function RootNavigator() {
     return <View style={{ flex: 1, backgroundColor: c.bg }} />;
   }
 
+  /*
+    The gate runs both ways, and it has to: signing in sets the session but does not move
+    anyone, so without the second redirect a user who just registered would be left sitting
+    on the signup screen holding a valid token.
+
+    Route groups are not part of the URL, so `app/(auth)/login.tsx` is `/login` here.
+  */
+  const inAuthGroup = pathname.startsWith("/login") || pathname.startsWith("/signup");
+
   // Not while already inside the auth group — redirecting to where you are is a loop.
-  if (status === "signedOut" && !pathname.startsWith("/login") && !pathname.startsWith("/signup")) {
+  if (status === "signedOut" && !inAuthGroup) {
     return <Redirect href="/(auth)/login" />;
+  }
+
+  // Signed in and still on a sign-in screen: the session just arrived. `/(tabs)` lands on
+  // the feed, which is the first trigger in the tab bar.
+  if (status === "signedIn" && inAuthGroup) {
+    return <Redirect href="/(tabs)" />;
   }
 
   return (

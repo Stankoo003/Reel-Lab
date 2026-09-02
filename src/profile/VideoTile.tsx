@@ -46,10 +46,22 @@ export default function VideoTile({
         {clip.name}
       </Text>
 
+      {/*
+        Named chips rather than a heart and a speech bubble. The app has no icon library, so
+        those were literal emoji — which render as someone else's artwork, change with the OS,
+        and read as decoration next to the mono numbers around them. Words match how the feed
+        rail already labels the same two things.
+      */}
       <View style={s.meta}>
-        <Text style={s.metaText}>♥ {compactCount(clip.likeCount ?? 0)}</Text>
-        {/* Comment counts are not on VideoResponse either — same reason, same treatment. */}
-        <Text style={s.metaText}>💬 —</Text>
+        <View style={s.chipMeta}>
+          <Text style={s.chipLabel}>LIKES</Text>
+          <Text style={s.chipValue}>{compactCount(clip.likeCount ?? 0)}</Text>
+        </View>
+        {/* Comment counts are not on VideoResponse — the chip keeps the shape, not a number. */}
+        <View style={s.chipMeta}>
+          <Text style={s.chipLabel}>COMM</Text>
+          <Text style={s.chipValue}>—</Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -77,6 +89,16 @@ const useStyles = themedStyles(({ c }) => ({
   chipDuration: { left: 6, bottom: 6 },
   chipViews: { right: 6, top: 6 },
   name: { fontFamily: font.sans, fontSize: 12, fontWeight: "500", color: c.text },
-  meta: { flexDirection: "row", gap: 11 },
-  metaText: { fontFamily: font.mono, fontSize: 10, color: c.w42 },
+  meta: { flexDirection: "row", gap: 6 },
+  chipMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 99,
+    backgroundColor: c.w06,
+  },
+  chipLabel: { fontFamily: font.mono, fontSize: 8.5, fontWeight: "500", letterSpacing: 0.5, color: c.w42 },
+  chipValue: { fontFamily: font.mono, fontSize: 9.5, fontWeight: "500", color: c.text },
 }));

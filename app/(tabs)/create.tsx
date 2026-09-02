@@ -3,12 +3,11 @@ import { useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import CameraScreen from "../../src/screens/CameraScreen";
 import { useClips } from "../../src/state/ClipsContext";
 import { errorMessage } from "../../src/errors";
-import { FixedTheme, button, font, isIOS, themedStyles, useTheme } from "../../src/theme";
+import { FixedTheme, font, themedStyles } from "../../src/theme";
 import type { ClipOrigin } from "../../src/types";
 
 /** The viewfinder is a picture surface: dark in both schemes, like the feed. */
@@ -23,7 +22,6 @@ export default function CreateRoute() {
 function CreateScreen() {
   const router = useRouter();
   const { addClip } = useClips();
-  const { c } = useTheme();
   const s = useStyles();
   const [error, setError] = useState<string | null>(null);
 
@@ -51,17 +49,15 @@ function CreateScreen() {
   }
 
   return (
-    <SafeAreaView style={s.root} edges={["top"]}>
+    /*
+      A plain View, not a SafeAreaView. Design 4a runs the viewfinder full bleed, so the
+      picture has to reach the screen edges; the chrome that must clear the notch and the
+      tab bar is inset inside CameraScreen instead, the way the feed does it.
+    */
+    <View style={s.root}>
       {/* Viewfinder is black in both schemes — see FixedTheme above. */}
       <StatusBar style="light" />
       <CameraScreen onClip={(uri) => accept(uri, "camera")} onOpenClips={importFromGallery} />
-      <View style={s.footer}>
-        <Pressable onPress={importFromGallery} style={s.secondary}>
-          <Text style={[button.labelStyle, { color: c.textButton }]}>
-            {button.label("Import from gallery")}
-          </Text>
-        </Pressable>
-      </View>
       {error ? (
         <Pressable onPress={() => setError(null)} style={s.errorBar}>
           <Text style={s.errorText} numberOfLines={4}>
@@ -69,26 +65,17 @@ function CreateScreen() {
           </Text>
         </Pressable>
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const useStyles = themedStyles(({ c }) => ({
   root: { flex: 1, backgroundColor: c.bgCamera },
-  footer: { paddingHorizontal: 16, paddingBottom: isIOS ? 6 : 12, backgroundColor: c.bg },
-  secondary: {
-    height: button.height,
-    borderRadius: button.radius,
-    borderWidth: 1,
-    borderColor: c.w18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   errorBar: {
     position: "absolute",
     left: 14,
     right: 14,
-    bottom: 90,
+    bottom: 200,
     padding: 13,
     borderRadius: 10,
     backgroundColor: c.recBg,

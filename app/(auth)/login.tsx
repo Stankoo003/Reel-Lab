@@ -45,8 +45,8 @@ export default function LoginScreen() {
     setSubmitting(true);
     try {
       await signIn(email.trim(), password);
-      // No navigation here. The gate in app/_layout.tsx watches the session and moves on its
-      // own — pushing as well would race it and could land on a screen that then redirects.
+      // No navigation here. The gate in app/_layout.tsx redirects to the feed as soon as the
+      // session exists; navigating here as well would race it.
     } catch (e) {
       // Per-field messages when the server sent any; otherwise the sentence it did send.
       if (e instanceof ValidationError && Object.keys(e.fields).length > 0) {

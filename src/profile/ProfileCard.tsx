@@ -8,6 +8,7 @@
 // no Card here; the settings blocks below it on the profile screen keep theirs.
 import { useEffect, useState } from "react";
 import { View, Text, Pressable } from "react-native";
+import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import * as ImagePicker from "expo-image-picker";
 import { button, font, isIOS, themedStyles, useTheme } from "../theme";
 import { compactCount } from "../format";
@@ -21,6 +22,23 @@ import type { FieldErrors, Profile } from "../../api/client";
 
 const MAX_BIO = 500;
 const MAX_DISPLAY_NAME = 100;
+
+/*
+ * Switching between viewing and editing used to be a single frame: the stats and the button
+ * vanished and the form was simply there. Nothing was wrong, but nothing said what had
+ * happened either — the eye had to re-find everything from scratch.
+ *
+ * Out is quicker than in, which is the usual asymmetry: what is leaving has already been
+ * read, and lingering on it only delays what replaces it. The card's own height is animated
+ * separately, so the content fades while the panel grows rather than after it.
+ *
+ * Reanimated is a dependency the app already carried and never used. babel-preset-expo wires
+ * its worklets plugin automatically once react-native-worklets is installed, so this needs no
+ * babel configuration.
+ */
+const ENTER = FadeIn.duration(180);
+const EXIT = FadeOut.duration(110);
+const RESIZE = LinearTransition.duration(220);
 
 export default function ProfileCard({
   profile,
@@ -133,29 +151,60 @@ export default function ProfileCard({
   const activity = profile.activity;
 
   return (
-    <View style={s.wrap}>
+    <Animated.View style={s.wrap} layout={RESIZE}>
       <View style={s.head}>
-        <Avatar
-          uri={avatarSource}
-          name={profile.displayName ?? profile.username}
-          size={72}
-          // The owner's own disc is always accent in the design; only the comment list
-          // varies its tint to tell speakers apart.
-          tint={c.accent}
-          busy={uploading}
-        />
+        {/*
+          In edit mode the avatar IS the button — tapping the picture is where a hand goes
+          to change it. A separate "Change avatar" button below the form put the control far
+          from the thing it changes, and named what the picture already shows.
 
-        <View style={s.identity}>
-          {editing ? (
-            <Field
-              label="DISPLAY NAME"
-              value={displayName}
-              onChangeText={setDisplayName}
-              error={fieldErrors.displayName}
-              maxLength={MAX_DISPLAY_NAME}
+          The badge is not decoration: without it a tappable image looks exactly like an
+          untappable one, and the affordance the removed button used to carry would be gone
+          rather than moved.
+        */}
+        {editing ? (
+          <Pressable
+            onPress={pickAvatar}
+            disabled={uploading}
+            accessibilityRole="button"
+            accessibilityLabel={uploading ? "Uploading avatar" : "Change avatar"}
+            accessibilityState={{ disabled: uploading }}
+          >
+            <Avatar
+              uri={avatarSource}
+              name={profile.displayName ?? profile.username}
+              size={72}
+              tint={c.accent}
+              busy={uploading}
             />
+            <View style={s.avatarBadge}>
+              <Text style={s.avatarBadgeText}>{uploading ? "…" : "EDIT"}</Text>
+            </View>
+          </Pressable>
+        ) : (
+          <Avatar
+            uri={avatarSource}
+            name={profile.displayName ?? profile.username}
+            size={72}
+            // The owner's own disc is always accent in the design; only the comment list
+            // varies its tint to tell speakers apart.
+            tint={c.accent}
+          />
+        )}
+
+        <Animated.View style={s.identity} layout={RESIZE}>
+          {editing ? (
+            <Animated.View key="name-field" entering={ENTER} exiting={EXIT}>
+              <Field
+                label="DISPLAY NAME"
+                value={displayName}
+                onChangeText={setDisplayName}
+                error={fieldErrors.displayName}
+                maxLength={MAX_DISPLAY_NAME}
+              />
+            </Animated.View>
           ) : (
-            <>
+            <Animated.View key="name-text" entering={ENTER} exiting={EXIT}>
               <Text style={type.profileName} numberOfLines={2}>
                 {profile.displayName ?? "—"}
               </Text>
@@ -166,15 +215,13 @@ export default function ProfileCard({
               */}
               <Text style={s.subtitle}>—</Text>
               {profile.bio ? <Text style={s.bio}>{profile.bio}</Text> : null}
-            </>
+            </Animated.View>
           )}
-        </View>
+        </Animated.View>
       </View>
 
       {editing ? (
-        <>
-          <Button label={uploading ? "Uploading…" : "Change avatar"} onPress={pickAvatar} disabled={uploading} />
-
+        <Animated.View key="edit-form" style={s.section} entering={ENTER} exiting={EXIT}>
           <Field
             label="BIO"
             value={bio}
@@ -203,9 +250,9 @@ export default function ProfileCard({
             />
             <Button label="Cancel" onPress={cancel} size="compact" />
           </View>
-        </>
+        </Animated.View>
       ) : (
-        <>
+        <Animated.View key="view-body" style={s.section} entering={ENTER} exiting={EXIT}>
           <StatGrid
             stats={[
               { label: "VIDEOS", value: compactCount(activity?.publishedVideos ?? 0) },
@@ -238,16 +285,33 @@ export default function ProfileCard({
               </Pressable>
             </View>
           ) : null}
-        </>
+        </Animated.View>
       )}
-    </View>
+    </Animated.View>
   );
 }
 
 const useStyles = themedStyles(({ c }) => ({
   wrap: { gap: 14 },
+  // The branch contents were direct children of `wrap` and took its gap. Grouping them under
+  // one animated view means the group carries the spacing now.
+  section: { gap: 14 },
   head: { flexDirection: "row", gap: 15, alignItems: "center" },
   identity: { flex: 1, minWidth: 0 },
+  // Sits on the disc's lower edge, with a ring in the page background so it reads as a
+  // badge on the avatar rather than a smudge in it.
+  avatarBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 99,
+    backgroundColor: c.accent,
+    borderWidth: 2,
+    borderColor: c.bg,
+  },
+  avatarBadgeText: { fontFamily: font.mono, fontSize: 8.5, fontWeight: "600", color: "#FFFFFF" },
   subtitle: { fontFamily: font.mono, fontSize: 12, color: c.w42, marginTop: 4 },
   bio: { fontFamily: font.sans, fontSize: 12.5, lineHeight: 12.5 * 1.45, color: c.w60, marginTop: 7 },
   actions: { flexDirection: "row", gap: 10 },

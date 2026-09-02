@@ -48,7 +48,13 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Label>Feed</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="create">
+      {/*
+        The camera insets its controls above the floating tab bar, which exposes the screen's
+        own background in the gap. That background is the root Stack's, and it follows the
+        device scheme — so on a light-mode phone a white strip appeared under a black
+        viewfinder. `bgCamera` is #000000 in both schemes, which is the point of the token.
+      */}
+      <NativeTabs.Trigger name="create" contentStyle={{ backgroundColor: c.bgCamera }}>
         <NativeTabs.Trigger.Icon
           sf={{ default: "plus.circle", selected: "plus.circle.fill" }}
           md="add_circle"
