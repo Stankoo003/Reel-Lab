@@ -3,6 +3,7 @@
 // the whole point the spike set out to prove (see SPIKE-FINDINGS.md §2).
 import { loadKit, HW } from "./ffmpeg";
 import { spikeAssets, outPath, toPath, overlayTextPath } from "./assets";
+import { verifyTrimmedFile } from "./trim";
 import type { EditSettings, ExportResult, TextPosition, TextSize } from "./types";
 
 export type TextPositionDef = {
@@ -146,7 +147,10 @@ export async function runExport(
         const code = await session.getReturnCode();
         const ms = Date.now() - started;
         if (ReturnCode.isSuccess(code)) {
-          resolve({ ok: true, cmd, ms, out: out.uri });
+          // Measure the range that was actually written instead of trusting -ss/-to:
+          // ffprobe reads the file back and the check travels with the result.
+          const trim = await verifyTrimmedFile(out.uri, settings.trimOut - settings.trimIn);
+          resolve({ ok: true, cmd, ms, out: out.uri, trim });
           return;
         }
         resolve({

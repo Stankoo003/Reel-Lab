@@ -1,6 +1,7 @@
 // Shared shapes across the editor: the clip, the staged edit, and the export result.
 import type { ImageSource } from "expo-image";
 import type { VideoThumbnail } from "expo-video";
+import type { TrimCheck } from "./trim";
 
 /** Where a clip came from. `library` clips exist on the server; the rest are local only. */
 export type ClipOrigin = "camera" | "gallery" | "library";
@@ -63,6 +64,11 @@ export type ExportSuccess = {
   ms: number;
   /** file:// URI of the rendered video. */
   out: string;
+  /**
+   * Did the written file's duration match trimOut − trimIn? null when ffprobe could
+   * not measure it — never silently "yes". See src/trim.ts.
+   */
+  trim?: TrimCheck | null;
   error?: undefined;
 };
 

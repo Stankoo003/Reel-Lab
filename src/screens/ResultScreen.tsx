@@ -9,6 +9,7 @@ import { usePlayerPlaying } from "../hooks/usePlayerPlaying";
 import { errorMessage } from "../errors";
 import { probe } from "../ffmpeg";
 import { toPath } from "../assets";
+import { checkTrim, describeTrimCheck } from "../trim";
 import type { EditSettings, ExportSuccess } from "../types";
 
 function Stat({ label, value, tint }: { label: string; value: string; tint?: string }) {
@@ -84,6 +85,12 @@ export default function ResultScreen({
     }
   }
 
+  // Prefer the check the export pass already made; fall back to the duration this
+  // screen probed, so the criterion is still measured if the result carries no check.
+  const trimCheck =
+    result.trim ??
+    (meta && settings ? checkTrim(settings.trimOut - settings.trimIn, Number(meta.duration)) : null);
+
   return (
     <View style={s.root}>
       <View style={s.header}>
@@ -132,6 +139,12 @@ export default function ResultScreen({
       <View style={s.note}>
         <Text style={[type.note, { color: c.w42 }]}>
           1 encode · 0 intermediate files. Measured on this device, this run.
+        </Text>
+        {/* The trim acceptance check, read off the file rather than assumed. */}
+        <Text style={[type.note, { color: trimCheck ? (trimCheck.ok ? c.success : c.recText) : c.w42 }]}>
+          {trimCheck
+            ? `trim ${trimCheck.ok ? "OK" : "MISMATCH"} · ${describeTrimCheck(trimCheck)}`
+            : "trim check · duration unavailable"}
         </Text>
       </View>
 
