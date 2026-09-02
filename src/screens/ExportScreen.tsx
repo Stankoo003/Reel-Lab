@@ -2,7 +2,14 @@
 import { View, Text, Pressable } from "react-native";
 import { font, isIOS, themedStyles, useTheme } from "../theme";
 import { timecode } from "../clips";
+import { drawableTexts } from "../export";
 import type { Clip, EditSettings } from "../types";
+
+/** "Text overlay burn-in" reads oddly for four captions; say how many are in the pass. */
+function textOpLabel(settings: EditSettings): string {
+  const n = drawableTexts(settings.texts).length;
+  return n > 1 ? `Text overlay burn-in · ${n} elements` : "Text overlay burn-in";
+}
 
 function Op({ label, state, done }: { label: string; state: string; done: boolean }) {
   const { c, type } = useTheme();
@@ -46,7 +53,7 @@ export default function ExportScreen({
 
   const ops: { label: string; done: boolean; state?: string }[] = [
     { label: `Trim ${timecode(settings.trimIn)} → ${timecode(settings.trimOut)}`, done: true },
-    { label: "Text overlay burn-in", done: !!settings.text?.trim() },
+    { label: textOpLabel(settings), done: drawableTexts(settings.texts).length > 0 },
     { label: "Audio mix · spike-music.m4a", done: !!settings.music },
     { label: "Write output file", done: false, state: "QUEUED" },
   ];
