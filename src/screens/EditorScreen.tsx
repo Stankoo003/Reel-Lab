@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, PanResponder } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
+import Animated, { LinearTransition } from "react-native-reanimated";
 import { Image } from "expo-image";
 import { font, isIOS, themedStyles, useTheme } from "../theme";
 import { usePlayerPlaying } from "../hooks/usePlayerPlaying";
@@ -202,6 +203,12 @@ function Bar({
   );
 }
 
+/*
+ * Growing the preview and collapsing the tools is one layout change, so it is animated as
+ * one: without it the panel vanishes and the video jumps, and the eye has to re-find both.
+ */
+const RESIZE = LinearTransition.duration(240);
+
 type Tab = "trim" | "text" | "audio";
 
 export default function EditorScreen({
@@ -225,6 +232,9 @@ export default function EditorScreen({
   const stripWidth = useRef(0);
   const [previewBox, setPreviewBox] = useState({ w: 0, h: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Preview takes the whole screen and the tools step aside. Tools are collapsed rather
+  // than unmounted, so the filmstrip does not re-extract its frames on every toggle.
+  const [expanded, setExpanded] = useState(false);
 
   const player = useVideoPlayer(clip.uri, (p) => {
     p.loop = false;
@@ -402,14 +412,30 @@ export default function EditorScreen({
         </Pressable>
       </View>
 
-      <View
-        style={s.preview}
+      <Animated.View
+        layout={RESIZE}
+        style={[s.preview, expanded && s.previewExpanded]}
         onLayout={(e) =>
           setPreviewBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
         }
       >
         <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="contain" nativeControls={false} />
+        {/*
+          Sits above the video but BELOW the captions and the play button, so those keep
+          their own taps and only a press on the picture itself resizes. A caption drag in
+          the TEXT tab is therefore never mistaken for a resize.
+        */}
+        <Pressable
+          onPress={() => setExpanded((e) => !e)}
+          style={StyleSheet.absoluteFill}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? "Shrink preview" : "Expand preview to full screen"}
+        />
         <Text style={s.previewMeta}>source clip · {clip.durationLabel}</Text>
+        {/* Named, not just implied by the tap — an invisible affordance is no affordance. */}
+        <View pointerEvents="none" style={s.sizeChip}>
+          <Text style={s.sizeChipText}>{expanded ? "TAP TO SHRINK" : "TAP TO EXPAND"}</Text>
+        </View>
         {texts.map((el) => (
           <CaptionGhost
             key={el.id}
@@ -429,7 +455,7 @@ export default function EditorScreen({
         >
           <Text style={s.playLabel}>{playing ? "PAUSE" : "PLAY"}</Text>
         </Pressable>
-      </View>
+      </Animated.View>
 
       <View style={s.timeRow}>
         <Text style={type.meta}>
@@ -438,6 +464,11 @@ export default function EditorScreen({
         <Text style={type.meta}>30 fps</Text>
       </View>
 
+      {/*
+        The tools. Collapsed with display:none rather than unmounted — dropping them would
+        throw away the extracted filmstrip and make every toggle re-decode the clip.
+      */}
+      <View style={expanded ? s.toolsHidden : s.tools}>
       <View style={s.stripWrap}>
         <Pressable
           style={s.strip}
@@ -718,6 +749,7 @@ export default function EditorScreen({
           ) : null}
         </ScrollView>
       </View>
+      </View>
     </View>
   );
 }
@@ -735,6 +767,10 @@ const useStyles = themedStyles(({ c }) => ({
   headerTitle: { fontFamily: font.sans, fontSize: 14, fontWeight: "600", color: c.text },
   exportLink: { fontFamily: font.sans, fontSize: 15, fontWeight: "600", color: c.accent },
 
+  // Collapsed group; `tools` is a plain passthrough so the children keep their own spacing.
+  tools: {},
+  toolsHidden: { display: "none" },
+
   preview: {
     aspectRatio: 16 / 9,
     backgroundColor: c.placeholder,
@@ -743,6 +779,19 @@ const useStyles = themedStyles(({ c }) => ({
     borderColor: c.w07,
     position: "relative",
   },
+  // Expanded: the aspect ratio is dropped so the picture takes whatever height is left.
+  // contentFit="contain" keeps it undistorted, letterboxing instead of stretching.
+  previewExpanded: { flex: 1, aspectRatio: undefined },
+  sizeChip: {
+    position: "absolute",
+    right: 12,
+    top: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 99,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  sizeChipText: { fontFamily: font.mono, fontSize: 8.5, letterSpacing: 0.5, color: c.w60 },
   previewMeta: {
     position: "absolute",
     left: 12,
