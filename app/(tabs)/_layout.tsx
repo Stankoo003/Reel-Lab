@@ -49,6 +49,21 @@ export default function TabsLayout() {
       </NativeTabs.Trigger>
 
       {/*
+        Second, not last: search belongs beside the thing it searches. The screen behind it
+        is a placeholder — see app/(tabs)/search.tsx — but the slot is claimed now so the
+        other tabs do not shift position once it is built.
+      */}
+      <NativeTabs.Trigger name="search">
+        {/*
+          Bare glass, no ring. SF has no filled variant of it, so unlike the other three this
+          tab has no outline-to-filled change — the accent tint carries the selected state on
+          its own, which is what the other tabs lean on anyway.
+        */}
+        <NativeTabs.Trigger.Icon sf="magnifyingglass" md="search" />
+        <NativeTabs.Trigger.Label>Search</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+
+      {/*
         The camera insets its controls above the floating tab bar, which exposes the screen's
         own background in the gap. That background is the root Stack's, and it follows the
         device scheme — so on a light-mode phone a white strip appeared under a black
