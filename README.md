@@ -149,6 +149,37 @@ back is never shown as playing; and returning to the app flips the pool's `enabl
 on, which re-asserts playback — unless the viewer had paused it, which is tracked
 separately and deliberately survives.
 
+## Music beds
+
+The editor's AUDIO tab offers three bundled beds — **Pulse** (8 s), **Drift** (30 s) and
+**Ticker** (20 s). `EditSettings.music` is the on/off toggle, `EditSettings.musicTrackId`
+picks which one; both gains are in dB and both sliders run from −40 to 0.
+
+**Where they come from.** They are synthesised from scratch by FFmpeg's own oscillators in
+`scripts/media/make-audio.sh` — no sample, loop pack or recording from anyone else is
+involved, so no third party holds rights in them. Re-running that script reproduces them.
+They are released as **CC0 1.0 / public domain**; credit and licence live in
+`scripts/media/ATTRIBUTION.md` and are surfaced in the app at the bottom of the AUDIO tab.
+Downloading beds from the internet was deliberately avoided: provenance we cannot verify is
+worse than a plain tone bed we can.
+
+**Length mismatch — the rule.**
+
+| Bed vs. the trimmed clip | What the export does |
+|---|---|
+| Bed **shorter** | It **loops** until the clip ends. `-stream_loop -1` on the music input, then `atrim` cuts at the clip length. |
+| Bed **longer** | It is **trimmed** to the clip length. Same `atrim`; no fade-in on the source. |
+| Either way | The last 0.6 s (or a quarter of the clip, whichever is smaller) fades out, so a loop seam or a trim point never cuts dead. |
+
+The bed is never stretched or pitch-shifted to fit, and the video is never extended to match
+the bed — the clip's length always wins. The AUDIO tab states which of the two will happen
+per track, before you export.
+
+**Mute is mute.** At −40 dB the original-audio slider does not attenuate — the `[0:a]`
+branch is dropped from the filter graph entirely, because −40 dB is still audible on
+headphones. With a bed selected the bed becomes the whole soundtrack; with no bed the output
+is encoded `-an`, i.e. it carries no audio stream at all.
+
 ## Comments
 
 Text only. One top-level comment **and** one reply per user, per video — enforced by

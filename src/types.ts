@@ -36,6 +36,9 @@ export type Clip = {
   likedByViewer?: boolean;
 };
 
+/** Keys of MUSIC_TRACKS in src/assets.ts — which bundled bed to mix in. */
+export type MusicTrackId = "pulse" | "drift" | "ticker";
+
 /** Keys of TEXT_POSITIONS in src/export.ts. */
 export type TextPosition = "top" | "lower" | "bottom";
 /** Keys of TEXT_SIZES in src/export.ts. */
@@ -51,7 +54,13 @@ export type EditSettings = {
   textColor: string;
   /** The editor's on/off toggle for the music bed. */
   music: boolean;
+  /** Which bundled bed to mix in when `music` is on. */
+  musicTrackId: MusicTrackId;
   musicGainDb: number;
+  /**
+   * Original-audio level. At MUTE_DB (src/export.ts) the original stream is dropped from
+   * the graph entirely, so "mute" is silence, not a very quiet track.
+   */
   originalGainDb: number;
 };
 
