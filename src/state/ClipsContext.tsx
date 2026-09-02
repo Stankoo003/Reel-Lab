@@ -9,6 +9,7 @@ import { adoptClip } from "../clips";
 import { errorMessage } from "../errors";
 import { runExport } from "../export";
 import { materialiseForExport } from "../library";
+import { deleteLocalClipFile } from "../localClips";
 import type { Clip, ClipOrigin, EditSettings, ExportSuccess } from "../types";
 
 export type ClipsValue = {
@@ -24,6 +25,15 @@ export type ClipsValue = {
   setError: (error: string | null) => void;
   selectClip: (clip: Clip | null) => void;
   addClip: (uri: string, origin: ClipOrigin) => Promise<Clip>;
+  /**
+   * Delete a local-only clip: its file in app-private storage first, then the entry.
+   *
+   * Destructive and unrecoverable — the file is the only copy — so callers confirm with
+   * the user before calling. Returns whether the file itself was removed; the entry is
+   * dropped either way, because a clip whose file has already vanished must not be
+   * stranded in the list.
+   */
+  removeClip: (clip: Clip) => boolean;
   /** Resolves to the result, or null if the export failed. */
   startExport: () => Promise<ExportSuccess | null>;
 };
@@ -82,6 +92,14 @@ export function ClipsProvider({ children }: { children: ReactNode }) {
     [selectClip]
   );
 
+  const removeClip = useCallback((target: Clip) => {
+    const deleted = deleteLocalClipFile(target);
+    setClips((prev) => prev.filter((x) => x.id !== target.id));
+    // The editor cannot keep working on a file that no longer exists.
+    setClip((current) => (current?.id === target.id ? null : current));
+    return deleted;
+  }, []);
+
   /** Pull the library from the API. Clips keep their remote CDN URL for playback. */
   const startExport = useCallback(async () => {
     if (busy.current || !clip || !settings) return null;
@@ -125,9 +143,10 @@ export function ClipsProvider({ children }: { children: ReactNode }) {
       setError,
       selectClip,
       addClip,
+      removeClip,
       startExport,
     }),
-    [clips, clip, settings, result, error, selectClip, addClip, startExport]
+    [clips, clip, settings, result, error, selectClip, addClip, removeClip, startExport]
   );
 
   const ticker: ExportProgress = useMemo(() => ({ progress, elapsed }), [progress, elapsed]);

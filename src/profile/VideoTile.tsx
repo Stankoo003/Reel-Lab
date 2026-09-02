@@ -6,6 +6,7 @@ import { View, Text, Pressable } from "react-native";
 import { Image } from "expo-image";
 import { font, isIOS, themedStyles, useTheme } from "../theme";
 import { compactCount } from "../format";
+import { formatBytes, isLocalOnly } from "../localClips";
 import type { Clip } from "../types";
 
 export default function VideoTile({
@@ -17,13 +18,16 @@ export default function VideoTile({
 }) {
   const { type } = useTheme();
   const s = useStyles();
+  // A locally recorded or imported clip has no server row: no views, no likes, and — the
+  // reason this branch exists at all — nothing to comment on. See isServerBacked.
+  const local = isLocalOnly(clip);
 
   return (
     <Pressable
       style={s.cell}
       onPress={() => onPress(clip)}
       accessibilityRole="button"
-      accessibilityLabel={clip.name}
+      accessibilityLabel={local ? `${clip.name}, saved on this device only` : clip.name}
     >
       <View style={s.thumb}>
         {clip.thumb ? (
@@ -36,9 +40,13 @@ export default function VideoTile({
           The design puts a view count here. Nothing on the server counts views yet — no
           field, no endpoint — so the chip renders its shape with an em dash rather than a
           number the app would be inventing.
+
+          A device-only clip has no views to have — it has never left the phone — so the
+          same corner carries that fact instead. Highlighted rather than the neutral black
+          chip, because it is the one thing about this tile a viewer must not miss.
         */}
-        <View style={[s.chip, s.chipViews]}>
-          <Text style={type.chip}>— ▸</Text>
+        <View style={[s.chip, s.chipViews, local && s.chipLocal]}>
+          <Text style={[type.chip, local && s.chipLocalText]}>{local ? "DEVICE ONLY" : "— ▸"}</Text>
         </View>
       </View>
 
@@ -53,15 +61,36 @@ export default function VideoTile({
         rail already labels the same two things.
       */}
       <View style={s.meta}>
-        <View style={s.chipMeta}>
-          <Text style={s.chipLabel}>LIKES</Text>
-          <Text style={s.chipValue}>{compactCount(clip.likeCount ?? 0)}</Text>
-        </View>
-        {/* Comment counts are not on VideoResponse — the chip keeps the shape, not a number. */}
-        <View style={s.chipMeta}>
-          <Text style={s.chipLabel}>COMM</Text>
-          <Text style={s.chipValue}>—</Text>
-        </View>
+        {local ? (
+          /*
+            Not a greyed-out LIKES/COMM pair. Neither number exists for a local clip and
+            neither ever will while it stays on the device, so the row says what it does
+            know — that this is unpublished, and what it costs in storage — rather than
+            showing two dashes that read as "loading".
+          */
+          <>
+            <View style={s.chipMeta}>
+              <Text style={s.chipLabel}>NOT</Text>
+              <Text style={s.chipValue}>PUBLISHED</Text>
+            </View>
+            <View style={s.chipMeta}>
+              <Text style={s.chipLabel}>SIZE</Text>
+              <Text style={s.chipValue}>{formatBytes(clip.bytes)}</Text>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={s.chipMeta}>
+              <Text style={s.chipLabel}>LIKES</Text>
+              <Text style={s.chipValue}>{compactCount(clip.likeCount ?? 0)}</Text>
+            </View>
+            {/* Comment counts are not on VideoResponse — the chip keeps the shape, not a number. */}
+            <View style={s.chipMeta}>
+              <Text style={s.chipLabel}>COMM</Text>
+              <Text style={s.chipValue}>—</Text>
+            </View>
+          </>
+        )}
       </View>
     </Pressable>
   );
@@ -87,6 +116,10 @@ const useStyles = themedStyles(({ c }) => ({
     backgroundColor: "rgba(0,0,0,0.62)",
   },
   chipDuration: { left: 6, bottom: 6 },
+  // The accent-tinted variant of the same chip: still dark enough to sit on a poster
+  // frame, but it reads as a statement rather than as another black metadata pill.
+  chipLocal: { backgroundColor: c.accentBgStrong, borderWidth: 1, borderColor: c.accentBorderSoft },
+  chipLocalText: { color: c.accentSoft },
   chipViews: { right: 6, top: 6 },
   name: { fontFamily: font.sans, fontSize: 12, fontWeight: "500", color: c.text },
   meta: { flexDirection: "row", gap: 6 },
