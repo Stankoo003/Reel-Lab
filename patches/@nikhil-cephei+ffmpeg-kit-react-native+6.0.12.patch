@@ -1,0 +1,252 @@
+diff --git a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/android/build.gradle b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/android/build.gradle
+index 47e151c..378616b 100644
+--- a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/android/build.gradle
++++ b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/android/build.gradle
+@@ -31,16 +31,19 @@ def safeExtGet(String prop, String fallback) {
+   rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+ }
+ 
++def rnCompileSdk = rootProject.ext.has('compileSdkVersion') ? rootProject.ext.get('compileSdkVersion') : 36
++def rnTargetSdk  = rootProject.ext.has('targetSdkVersion')  ? rootProject.ext.get('targetSdkVersion')  : 36
++
+ android {
+   if (project.android.hasProperty("namespace")) {
+     namespace 'com.arthenica.ffmpegkit.reactnative'
+   }
+ 
+-  compileSdkVersion 33
++  compileSdkVersion rnCompileSdk
+ 
+   defaultConfig {
+     minSdkVersion 24
+-    targetSdkVersion 33
++    targetSdkVersion rnTargetSdk
+     versionCode 610
+     versionName "6.0.10"
+     buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", isNewArchitectureEnabled().toString()
+@@ -67,7 +70,11 @@ android {
+ 
+   sourceSets {
+     main {
+-      java.srcDirs += isNewArchitectureEnabled() ? ['src/newarch'] : ['src/oldarch']
++      // The fork's newarch source set needs a codegen-generated spec class that never gets
++      // generated (its gradle never applies the com.facebook.react plugin). Force the legacy
++      // bridge module and let RN 0.86's TurboModule interop bridge it — index.js already does
++      // TurboModuleRegistry.get(...) ?? NativeModules.FFmpegKitReactNativeModule.
++      java.srcDirs += ['src/oldarch']
+     }
+   }
+ }
+@@ -144,7 +151,12 @@ repositories {
+ }
+ 
+ dependencies {
+-  api 'com.facebook.react:react-native:+'
+-  implementation(name: 'ffmpeg-kit-full-gpl', ext: 'aar')
++  api 'com.facebook.react:react-android'
++  // 16 KB page-size compliant rebuild (Android 15 / Play requirement).
++  // Replaces the retired com.arthenica AAR and the fork's 4 KB-aligned flatDir AAR.
++  // 16 KB page-size compliant rebuild (Android 15 / Play requirement).
++  // NOT io.github.jamaismagic.*: every variant of that republish ships a libavdevice.so
++  // with an unresolved PLATFORM_hid_write, so FFmpegKitConfig fails its static init at runtime.
++  implementation 'com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1'
+   implementation 'com.arthenica:smart-exception-java:0.2.1'
+ }
+diff --git a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/android/src/main/java/com/arthenica/ffmpegkit/reactnative/FFmpegKitReactNativePackage.java b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/android/src/main/java/com/arthenica/ffmpegkit/reactnative/FFmpegKitReactNativePackage.java
+index cdc890c..b8d87bd 100644
+--- a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/android/src/main/java/com/arthenica/ffmpegkit/reactnative/FFmpegKitReactNativePackage.java
++++ b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/android/src/main/java/com/arthenica/ffmpegkit/reactnative/FFmpegKitReactNativePackage.java
+@@ -55,7 +55,11 @@ public class FFmpegKitReactNativePackage extends TurboReactPackage {
+           false,  // needsEagerInit
+           false,  // hasConstants
+           false,  // isCxxModule
+-          BuildConfig.IS_NEW_ARCHITECTURE_ENABLED  // isTurboModule
++          // false, not BuildConfig.IS_NEW_ARCHITECTURE_ENABLED: the fork has no codegen-generated
++          // C++ spec, so registering as a TurboModule makes TurboModuleManager fail with
++          // "Unable to create module (legacy: false, turbo: true)". Registering it as a legacy
++          // module routes it through RN 0.86's TurboModule interop, which does work.
++          false  // isTurboModule
+         )
+       );
+       return moduleInfos;
+diff --git a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec
+index 97e602a..dc454fb 100644
+--- a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec
++++ b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec
+@@ -17,7 +17,7 @@ Pod::Spec.new do |s|
+ 
+   s.source       = { :git => "https://github.com/Nikhil-Cephei/ffmpeg-kit-rn-full-gpl.git", :branch => "main" }
+ 
+-  s.source_files = '**/FFmpegKitReactNativeModule.{mm,m,h}'
++  s.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+ 
+   if respond_to?(:install_modules_dependencies, true)
+     install_modules_dependencies(s)
+@@ -36,73 +36,89 @@ Pod::Spec.new do |s|
+   s.default_subspec = 'https'
+ 
+   s.subspec 'min' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-min', "6.0"
+   end
+ 
+   s.subspec 'min-lts' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-min', "6.0.LTS"
+     ss.ios.deployment_target = '10'
+   end
+ 
+   s.subspec 'min-gpl' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-min-gpl', "6.0"
+   end
+ 
+   s.subspec 'min-gpl-lts' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-min-gpl', "6.0.LTS"
+     ss.ios.deployment_target = '10'
+   end
+ 
+   s.subspec 'https' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-https', "6.0"
+   end
+ 
+   s.subspec 'https-lts' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-https', "6.0.LTS"
+     ss.ios.deployment_target = '10'
+   end
+ 
+   s.subspec 'https-gpl' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-https-gpl', "6.0"
+   end
+ 
+   s.subspec 'https-gpl-lts' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-https-gpl', "6.0.LTS"
+     ss.ios.deployment_target = '10'
+   end
+ 
+   s.subspec 'audio' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-audio', "6.0"
+   end
+ 
+   s.subspec 'audio-lts' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-audio', "6.0.LTS"
+     ss.ios.deployment_target = '10'
+   end
+ 
+   s.subspec 'video' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-video', "6.0"
+   end
+ 
+   s.subspec 'video-lts' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-video', "6.0.LTS"
+     ss.ios.deployment_target = '10'
+   end
+ 
+   s.subspec 'full' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-full', "6.0"
+   end
+ 
+   s.subspec 'full-lts' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-full', "6.0.LTS"
+     ss.ios.deployment_target = '10'
+   end
+ 
+   s.subspec 'full-gpl' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-full-gpl', '6.0'
+   end
+ 
+   s.subspec 'full-gpl-lts' do |ss|
++    ss.source_files = 'ios/FFmpegKitReactNativeModule.{mm,h}'
+     ss.dependency 'ffmpeg-kit-ios-full-gpl', "6.0.LTS"
+     ss.ios.deployment_target = '10'
+   end
+diff --git a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/FFmpegKitReactNativeModule.h b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/FFmpegKitReactNativeModule.h
+index 43f65bc..ef716eb 100644
+--- a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/FFmpegKitReactNativeModule.h
++++ b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/FFmpegKitReactNativeModule.h
+@@ -1,7 +1,10 @@
+ #import <Foundation/Foundation.h>
+ #import <ffmpegkit/FFmpegKitConfig.h>
+ 
+-#ifdef RCT_NEW_ARCH_ENABLED
++// spike: the fork ships no working codegen spec (FFmpegKitReactNativeSpec.h is never
++// generated), so the TurboModule branch cannot compile. Force the legacy RCTBridgeModule
++// path and let RN 0.86's TurboModule interop bridge it.
++#if 0 // was: #ifdef RCT_NEW_ARCH_ENABLED
+ #import <FFmpegKitReactNativeSpec/FFmpegKitReactNativeSpec.h>
+ #import <React/RCTEventEmitter.h>
+ 
+diff --git a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/FFmpegKitReactNativeModule.mm b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/FFmpegKitReactNativeModule.mm
+index eb59462..0284fb8 100644
+--- a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/FFmpegKitReactNativeModule.mm
++++ b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/FFmpegKitReactNativeModule.mm
+@@ -33,7 +33,10 @@
+ // (b) which architecture the module was compiled for.
+ __attribute__((constructor))
+ static void FFmpegKitModuleDiag(void) {
+-#ifdef RCT_NEW_ARCH_ENABLED
++// spike: the fork ships no working codegen spec (FFmpegKitReactNativeSpec.h is never
++// generated), so the TurboModule branch cannot compile. Force the legacy RCTBridgeModule
++// path and let RN 0.86's TurboModule interop bridge it.
++#if 0 // was: #ifdef RCT_NEW_ARCH_ENABLED
+     NSLog(@"[FFmpegKitReactNativeModule] ✅ Loaded — compiled with RCT_NEW_ARCH_ENABLED=1 (TurboModule path active)");
+ #else
+     NSLog(@"[FFmpegKitReactNativeModule] ⚠️  Loaded — compiled WITHOUT RCT_NEW_ARCH_ENABLED (Old Architecture path — TurboModuleRegistry.get() will return null in bridgeless mode)");
+@@ -571,7 +574,7 @@ - (void)registerGlobalCallbacks {
+ }
+ 
+ RCT_EXPORT_METHOD(getSessionsByState:(int)sessionState resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
+-    resolve([FFmpegKitReactNativeModule toSessionArray:[FFmpegKitConfig getSessionsByState:sessionState]]);
++    resolve([FFmpegKitReactNativeModule toSessionArray:[FFmpegKitConfig getSessionsByState:(SessionState)sessionState]]);
+ }
+ 
+ RCT_EXPORT_METHOD(getLogRedirectionStrategy:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
+@@ -579,7 +582,7 @@ - (void)registerGlobalCallbacks {
+ }
+ 
+ RCT_EXPORT_METHOD(setLogRedirectionStrategy:(int)logRedirectionStrategy resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
+-    [FFmpegKitConfig setLogRedirectionStrategy:logRedirectionStrategy];
++    [FFmpegKitConfig setLogRedirectionStrategy:(LogRedirectionStrategy)logRedirectionStrategy];
+     resolve(nil);
+ }
+ 
+@@ -876,7 +879,10 @@ + (BOOL)isValidPositiveNumber:(int)value {
+     }
+ }
+ 
+-#ifdef RCT_NEW_ARCH_ENABLED
++// spike: the fork ships no working codegen spec (FFmpegKitReactNativeSpec.h is never
++// generated), so the TurboModule branch cannot compile. Force the legacy RCTBridgeModule
++// path and let RN 0.86's TurboModule interop bridge it.
++#if 0 // was: #ifdef RCT_NEW_ARCH_ENABLED
+ - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:(const facebook::react::ObjCTurboModule::InitParams &)params {
+     return std::make_shared<facebook::react::NativeFFmpegKitReactNativeModuleSpecJSI>(params);
+ }
+diff --git a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/plugin/withFFmpegKit.js b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/plugin/withFFmpegKit.js
+index 7e0d830..abb6448 100644
+--- a/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/plugin/withFFmpegKit.js
++++ b/node_modules/@nikhil-cephei/ffmpeg-kit-react-native/plugin/withFFmpegKit.js
+@@ -32,7 +32,10 @@ const withFFmpegKit = (config, options = {}) => {
+ 
+       const pods = [
+         `  pod 'ffmpeg-kit-ios-full-gpl', :podspec => '../node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ios/ffmpeg-kit-ios-full-gpl.podspec'`,
+-        `  pod 'ffmpeg-kit-react-native/${subspec}', :podspec => '../node_modules/@nikhil-cephei/ffmpeg-kit-react-native/ffmpeg-kit-react-native.podspec'`,
++        // :path, not :podspec — with :podspec CocoaPods clones s.source (the binary-host
++        // repo, which has no Objective-C sources), so source_files matches nothing and the
++        // native module never registers. :path resolves source_files from node_modules.
++        `  pod 'ffmpeg-kit-react-native/${subspec}', :path => '../node_modules/@nikhil-cephei/ffmpeg-kit-react-native'`,
+       ].join('\n');
+ 
+       contents = contents.replace(/^(\s*use_expo_modules!)/m, `${pods}\n\n$1`);

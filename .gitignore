@@ -39,3 +39,17 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Encoded media — regenerate with scripts/media/encode.sh
+/media/
+
+# The 15MB spike fixture. Nothing loads it — it was a scratch clip for the capability
+# spike — and a binary that size lives in git history forever once committed.
+assets/spike/sample.mp4
+
+# Local environment. Ignore every .env variant, but keep the committed templates.
+.env
+.env.*
+!.env.example
+!.env.production.example
+scripts/media/.env.r2

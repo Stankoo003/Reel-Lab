@@ -1,0 +1,78 @@
+spring:
+  application:
+    name: reellab-server
+
+  datasource:
+    # No literals here on purpose: every credential comes from the environment,
+    # and .env is gitignored.
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema. `validate` makes entities and migrations disagree
+      # loudly at startup instead of letting Hibernate quietly "fix" the schema
+      # behind Flyway's back.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      max-file-size: 256MB
+      max-request-size: 300MB
+
+springdoc:
+  # Puts /actuator/health into the published contract. Without this the client's
+  # health call would have to be untyped, which defeats generating the client.
+  show-actuator: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  endpoint:
+    health:
+      show-details: always
+
+reellab:
+  auth:
+    # No default. A signing key shipped in the repository is not a secret, and an app that
+    # starts without one would issue tokens anybody could forge — failing to start is the
+    # louder and safer of the two failures.
+    secret: ${JWT_SECRET}
+    # No refresh token, so this is also how long a sign-in lasts before the app asks again.
+    ttl: 30d
+  media:
+    # The database stores relative paths only; this base is prepended when
+    # building responses, so swapping CDN host is a config change.
+    cdn-base-url: ${MEDIA_CDN_BASE_URL:http://localhost:8080/media}
+    storage:
+      # Where uploaded bytes land. Defaults to the repo's media/ directory, which is
+      # what the local media host serves — so an upload is playable immediately.
+      directory: ${MEDIA_STORAGE_DIR:../media}
+      max-bytes: ${MEDIA_MAX_BYTES:268435456}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  flyway:
+    # Seed lives in its own location so it can never reach a real deployment
+    # through a migration that runs everywhere.
+    locations: classpath:db/migration, classpath:db/seed
+    # The seed is numbered V900 so it always sorts last, which means every real
+    # migration added later is "out of order" relative to a dev database that has
+    # already been seeded. Allowed here and only here — production has no seed, so
+    # its migrations stay strictly ordered.
+    out-of-order: true

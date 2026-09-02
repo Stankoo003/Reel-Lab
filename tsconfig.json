@@ -1,0 +1,26 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "api/**/*.ts",
+    "app/**/*",
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "media",
+    "server",
+    "android",
+    "ios"
+  ]
+}

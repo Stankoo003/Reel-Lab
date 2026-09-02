@@ -5,9 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.reellab.spike"
     },
     "android": {
       "adaptiveIcon": {
@@ -15,10 +16,58 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "package": "dev.reellab.spike"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "ReelLab needs the camera to record clips.",
+          "microphonePermission": "ReelLab needs the microphone to record audio.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "ReelLab saves exported clips to your library.",
+          "savePhotosPermission": "ReelLab saves exported clips to your library.",
+          "granularPermissions": [
+            "video"
+          ]
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "ReelLab needs your library to pick a source clip."
+        }
+      ],
+      "expo-asset",
+      "expo-image",
+      [
+        "@nikhil-cephei/ffmpeg-kit-react-native",
+        {
+          "subspec": "full-gpl"
+        }
+      ],
+      "expo-dev-client",
+      "./plugins/withSigning",
+      "expo-router"
+    ],
+    "newArchEnabled": true,
+    "scheme": "reellab"
   }
 }
