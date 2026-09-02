@@ -10,14 +10,53 @@
 // uses — so it clears the floating tab bar without a hardcoded number, while the picture
 // behind it still reaches the screen edges.
 import { useRef, useState, useEffect } from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, AppState } from "react-native";
+import type { TextStyle } from "react-native";
 import { SafeAreaView } from "react-native-screens/experimental";
+import { openSettings } from "expo-linking";
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
-import type { CameraType } from "expo-camera";
-import { font, isIOS, themedStyles, useTheme } from "../theme";
+import type { CameraType, PermissionResponse } from "expo-camera";
+import { button, font, isIOS, themedStyles, useTheme } from "../theme";
 import { errorMessage } from "../errors";
 
 const SAFE_EDGES = { top: true, bottom: true } as const;
+
+/**
+ * What the viewfinder is allowed to do right now.
+ *
+ * `expo-camera`'s hooks hand back `null` until the first read resolves, so "we do not know
+ * yet" is a real state rather than a synonym for "denied" — rendering the denial copy during
+ * that gap is part of what made the old screen feel broken on a cold start.
+ *
+ * - `checking`  — the permission read has not come back.
+ * - `rationale` — never asked. We explain first; the OS dialog comes after a tap.
+ * - `denied`    — asked and refused, but `canAskAgain` is still true, so a retry can work.
+ * - `blocked`   — `canAskAgain === false`. No prompt will appear again; the only route left
+ *                 is the system settings app.
+ * - `ready`     — camera and microphone both granted.
+ */
+type Gate = "checking" | "rationale" | "denied" | "blocked" | "ready";
+
+function gateOf(camera: PermissionResponse | null, mic: PermissionResponse | null): Gate {
+  if (!camera || !mic) return "checking";
+  if (camera.granted && mic.granted) return "ready";
+  // `canAskAgain` only means "permanently denied" once the permission has actually been
+  // refused — it is not meaningful while the status is still undetermined.
+  const blocked =
+    (!camera.granted && camera.status === "denied" && !camera.canAskAgain) ||
+    (!mic.granted && mic.status === "denied" && !mic.canAskAgain);
+  if (blocked) return "blocked";
+  if (camera.status === "undetermined" || mic.status === "undetermined") return "rationale";
+  return "denied";
+}
+
+/** Which of the two is still missing, in words, for the explanation copy. */
+function missingLabel(camera: PermissionResponse | null, mic: PermissionResponse | null): string {
+  const missing = [camera?.granted ? null : "camera", mic?.granted ? null : "microphone"].filter(
+    Boolean
+  );
+  return missing.join(" and ") || "camera";
+}
 
 function elapsedLabel(sec: number): string {
   const m = String(Math.floor(sec / 60)).padStart(2, "0");
@@ -37,14 +76,57 @@ export default function CameraScreen({
   const { type } = useTheme();
   const s = useStyles();
   const cam = useRef<CameraView>(null);
-  const [cameraPerm, requestCamera] = useCameraPermissions();
-  const [micPerm, requestMic] = useMicrophonePermissions();
+  const [cameraPerm, requestCamera, getCamera] = useCameraPermissions();
+  const [micPerm, requestMic, getMic] = useMicrophonePermissions();
   const [facing, setFacing] = useState<CameraType>("back");
   const [recording, setRecording] = useState(false);
+  const [asking, setAsking] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const ready = cameraPerm?.granted && micPerm?.granted;
+  const gate = gateOf(cameraPerm, micPerm);
+  const ready = gate === "ready";
+
+  /**
+   * Re-read the permissions when the app comes back to the foreground.
+   *
+   * The settings route leaves the app, so the grant happens somewhere we cannot observe.
+   * Without this the user flips both switches, comes back, and still faces the blocked
+   * screen — the classic dead end this whole gate exists to avoid.
+   */
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void getCamera();
+        void getMic();
+      }
+    });
+    return () => sub.remove();
+  }, [getCamera, getMic]);
+
+  /**
+   * Ask for both, camera first.
+   *
+   * Sequential rather than parallel: two OS dialogs raced onto the screen at once is
+   * undefined behaviour on Android, and the user cannot tell which one they are answering.
+   */
+  async function askForPermissions() {
+    if (asking) return;
+    setAsking(true);
+    setError(null);
+    try {
+      await requestCamera();
+      // Recording without audio is not a mode this app offers, so ask for the microphone
+      // even if the camera was just refused — one round of dialogs rather than two visits.
+      // A refusal is not an error: the hooks update, and PermissionGate re-renders with the
+      // copy for whichever state we landed in.
+      await requestMic();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setAsking(false);
+    }
+  }
 
   useEffect(() => {
     if (!recording) {
@@ -80,19 +162,15 @@ export default function CameraScreen({
           videoQuality="1080p"
         />
       ) : (
-        <View style={[StyleSheet.absoluteFill, s.permission]}>
-          <Text style={[type.note, s.permissionCopy]}>
-            camera + microphone permission required
-          </Text>
-          <View style={s.permissionRow}>
-            <Pressable onPress={requestCamera} style={s.ghostSm}>
-              <Text style={s.ghostSmText}>Camera {cameraPerm?.granted ? "✓" : ""}</Text>
-            </Pressable>
-            <Pressable onPress={requestMic} style={s.ghostSm}>
-              <Text style={s.ghostSmText}>Mic {micPerm?.granted ? "✓" : ""}</Text>
-            </Pressable>
-          </View>
-        </View>
+        <PermissionGate
+          gate={gate}
+          missing={missingLabel(cameraPerm, micPerm)}
+          asking={asking}
+          onAsk={askForPermissions}
+          onImport={onOpenClips}
+          s={s}
+          noteStyle={type.note}
+        />
       )}
 
       {/* Two scrims, not a flat bar: they keep the mono labels legible over whatever the
@@ -109,8 +187,11 @@ export default function CameraScreen({
           </View>
 
           <View style={[s.recPill, recording && s.recPillOn]}>
+            {/* The pill is the screen's status line, so it must not claim READY while the
+                camera is switched off — that is the reading that made a denied screen look
+                merely broken. */}
             <Text style={[s.recText, recording && s.recTextOn]}>
-              {recording ? `● ${elapsedLabel(elapsed)}` : "READY"}
+              {recording ? `● ${elapsedLabel(elapsed)}` : ready ? "READY" : "NO CAMERA"}
             </Text>
           </View>
 
@@ -157,6 +238,84 @@ export default function CameraScreen({
           </View>
         </View>
       </SafeAreaView>
+    </View>
+  );
+}
+
+/**
+ * What fills the viewfinder when the camera cannot.
+ *
+ * Three jobs, in the order the design's ink ramp orders them: say what is missing, say why
+ * this app wants it, and offer the two things that are still possible — one primary action
+ * that moves the permission forward, and Import, which needs no camera permission at all
+ * and is the reason this is not a dead end.
+ *
+ * It occupies the same absolute fill the preview would, so the pills, the readout and the
+ * control row keep their positions and the screen never restructures itself around a
+ * refusal.
+ */
+function PermissionGate({
+  gate,
+  missing,
+  asking,
+  onAsk,
+  onImport,
+  s,
+  noteStyle,
+}: {
+  gate: Gate;
+  missing: string;
+  asking: boolean;
+  onAsk: () => void;
+  onImport: () => void;
+  s: ReturnType<typeof useStyles>;
+  noteStyle: TextStyle;
+}) {
+  if (gate === "checking") {
+    return (
+      <View style={[StyleSheet.absoluteFill, s.permission]}>
+        <Text style={[noteStyle, s.permissionCopy]}>checking permissions…</Text>
+      </View>
+    );
+  }
+
+  const blocked = gate === "blocked";
+  const title = blocked
+    ? `${missing} access is turned off`
+    : gate === "denied"
+      ? `ReelLab still needs the ${missing}`
+      : "Record with camera and microphone";
+
+  // The rationale, shown BEFORE the OS dialog rather than after it: the system prompt only
+  // names the permission, and a user who has not been told what it is for reasonably says no.
+  const body = blocked
+    ? `The ${missing} permission is switched off for ReelLab and iOS/Android will not ask again from inside the app. Turn it back on in Settings and recording works immediately — nothing you record is uploaded.`
+    : `Recording a clip uses the camera for the picture and the microphone for sound. Both stay on this device: clips are saved to ReelLab's own private storage and nothing is uploaded unless you publish it yourself.`;
+
+  return (
+    <View style={[StyleSheet.absoluteFill, s.permission]}>
+      <View style={s.permissionCard}>
+        <Text style={s.permissionTitle}>{title}</Text>
+        <Text style={s.permissionBody}>{body}</Text>
+
+        <Pressable
+          onPress={blocked ? () => void openSettings() : onAsk}
+          disabled={asking}
+          style={[s.primary, asking && s.dim]}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: asking }}
+        >
+          <Text style={s.primaryLabel}>
+            {button.label(blocked ? "Open settings" : asking ? "Waiting…" : "Continue")}
+          </Text>
+        </Pressable>
+
+        {/* Import needs no camera permission, so it is the honest way out of every state
+            above — the screen is never a wall. */}
+        <Pressable onPress={onImport} style={s.secondary} accessibilityRole="button">
+          <Text style={s.secondaryLabel}>{button.label("Import a video instead")}</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -277,17 +436,50 @@ const useStyles = themedStyles(({ c }) => ({
   shutterInnerRec: { width: 28, height: 28, borderRadius: 7, backgroundColor: c.rec },
   dim: { opacity: 0.35 },
 
-  permission: { alignItems: "center", justifyContent: "center", gap: 14, paddingHorizontal: 30 },
+  permission: { alignItems: "center", justifyContent: "center", gap: 14, paddingHorizontal: 26 },
   permissionCopy: { textAlign: "center", color: c.w30, letterSpacing: 0.63 },
-  permissionRow: { flexDirection: "row", gap: 10 },
-  ghostSm: {
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 10,
+  // A card rather than loose text on black: the copy has to compete with the scrims and the
+  // floating controls, and the design gives raised explanatory content its own surface.
+  permissionCard: {
+    width: "100%",
+    maxWidth: 340,
+    padding: 20,
+    borderRadius: isIOS ? 14 : 16,
+    backgroundColor: c.sheet,
+    borderWidth: 1,
+    borderColor: c.w10,
+    gap: 12,
+  },
+  permissionTitle: {
+    fontFamily: font.sans,
+    fontSize: 16,
+    fontWeight: isIOS ? "600" : "500",
+    color: c.text,
+  },
+  permissionBody: {
+    fontFamily: font.sans,
+    fontSize: 12.5,
+    lineHeight: 12.5 * 1.5,
+    color: c.w70,
+  },
+  primary: {
+    height: button.height,
+    borderRadius: button.radius,
+    backgroundColor: c.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  primaryLabel: { ...button.labelStyle, color: "#FFFFFF" },
+  secondary: {
+    height: button.compactHeight,
+    borderRadius: button.compactRadius,
     borderWidth: 1,
     borderColor: c.w16,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  ghostSmText: { fontFamily: font.sans, fontSize: 12, fontWeight: "500", color: c.textButton },
+  secondaryLabel: { ...button.compactLabelStyle, color: c.textButton },
   error: {
     fontFamily: font.mono,
     fontSize: 10.5,

@@ -3,9 +3,9 @@
 // Routes cannot share a useState the way the old single-screen App.js did, so the
 // clip library, the staged edit settings and the export run live here instead. This
 // is a mechanical extraction of what App.js already owned — not a rewrite.
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { adoptClip } from "../clips";
+import { adoptClip, restoreClips } from "../clips";
 import { errorMessage } from "../errors";
 import { runExport } from "../export";
 import { materialiseForExport } from "../library";
@@ -65,6 +65,33 @@ export function ClipsProvider({ children }: { children: ReactNode }) {
   const [result, setResult] = useState<ExportSuccess | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+
+  /**
+   * Bring back what earlier sessions recorded or imported.
+   *
+   * Clips are copied into app-private document storage (see `adoptClip`), so the FILES
+   * outlive the process — but this list does not, and without a restore the library looked
+   * empty after every relaunch. Appended rather than replacing, because a clip captured
+   * while the scan was still running must not be dropped.
+   */
+  useEffect(() => {
+    let alive = true;
+    restoreClips()
+      .then((restored) => {
+        if (!alive || restored.length === 0) return;
+        setClips((prev) => {
+          const known = new Set(prev.map((c) => c.id));
+          return [...prev, ...restored.filter((c) => !known.has(c.id))];
+        });
+      })
+      .catch(() => {
+        // An unreadable clips directory is not worth an error banner on launch; capture
+        // and import both still work, and they recreate it.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const selectClip = useCallback((next: Clip | null) => {
     setClip(next);

@@ -25,6 +25,15 @@ function CreateScreen() {
   const s = useStyles();
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Take ownership of a source clip, then open the editor.
+   *
+   * `addClip` → `adoptClip` copies the file into app-private document storage before this
+   * returns, so neither the recorder's temp file nor the picker's cache copy is what the
+   * editor goes on to read. The copy is local only — nothing on this path talks to the
+   * network. Upload happens exactly once, later and deliberately, from the publish screen
+   * (`app/post.tsx` → `uploadMedia`), against the exported file.
+   */
   async function accept(uri: string, origin: ClipOrigin) {
     try {
       await addClip(uri, origin);
@@ -34,6 +43,15 @@ function CreateScreen() {
     }
   }
 
+  /**
+   * Import needs no permission of ours.
+   *
+   * SDK 57's picker runs out of process (PHPicker / the Android photo picker), so the user
+   * grants access to the one video they chose by choosing it — there is no library
+   * permission to request, and nothing to deny. That is why Import stays available on the
+   * camera screen even when camera and microphone are refused: it is the path that always
+   * works. Cancelling is a normal outcome, not an error.
+   */
   async function importFromGallery() {
     try {
       const r = await ImagePicker.launchImageLibraryAsync({
@@ -42,7 +60,9 @@ function CreateScreen() {
         quality: 1,
       });
       if (r.canceled) return;
-      await accept(r.assets[0].uri, "gallery");
+      const picked = r.assets[0]?.uri;
+      if (!picked) return;
+      await accept(picked, "gallery");
     } catch (e) {
       setError(errorMessage(e));
     }
