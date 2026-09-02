@@ -4,27 +4,61 @@
 import { loadKit, HW } from "./ffmpeg";
 import { spikeAssets, outPath, toPath, overlayTextPath, musicTrackPath } from "./assets";
 import { verifyTrimmedFile } from "./trim";
-import type { EditSettings, ExportResult, TextPosition, TextSize } from "./types";
+import type { EditSettings, ExportResult, TextElement, TextSizePreset } from "./types";
 
-export type TextPositionDef = {
-  label: string;
-  /** The drawtext `y` expression. */
-  y: string;
-  /** Places the editor's ghost box to match; a partial ViewStyle. */
-  preview: { top?: number; bottom?: number };
+/**
+ * TEXT GEOMETRY — the single source of truth shared by the preview and by drawtext.
+ *
+ * The old build had three canned positions whose `y` was a drawtext expression and whose
+ * `preview` was the matching editor offset: two hand-kept numbers that had to be edited
+ * together. Free dragging generalises that idea by removing the duplication entirely —
+ * a TextElement stores x/y/size as FRACTIONS of the frame, and both sides derive from
+ * them through the helpers below. Change a helper and both sides move together.
+ */
+
+/** Assumed frame size when expo-video has not reported the real one yet. */
+export const DEFAULT_FRAME_WIDTH = 1920;
+export const DEFAULT_FRAME_HEIGHT = 1080;
+
+/** The design's S / M / L boxes, as a fraction of frame height (44 / 64 / 92 px @1080). */
+export const TEXT_SIZE_PRESETS: Record<TextSizePreset, number> = {
+  S: 44 / DEFAULT_FRAME_HEIGHT,
+  M: 64 / DEFAULT_FRAME_HEIGHT,
+  L: 92 / DEFAULT_FRAME_HEIGHT,
 };
 
-/** Where the text sits, as offered by the design's Top / Lower third / Bottom control. */
-export const TEXT_POSITIONS: Record<TextPosition, TextPositionDef> = {
-  // `y` is the drawtext expression; `preview` places the editor's ghost box to match.
-  top: { label: "Top", y: "120", preview: { top: 20, bottom: undefined } },
-  lower: { label: "Lower third", y: "h-220", preview: { bottom: 34 } },
-  bottom: { label: "Bottom", y: "h-110", preview: { bottom: 10 } },
-};
-
-export const TEXT_SIZES: Record<TextSize, number> = { S: 44, M: 64, L: 92 };
+/** Bounds for the continuous size slider, in the same fraction-of-height unit. */
+export const TEXT_SIZE_MIN = 20 / DEFAULT_FRAME_HEIGHT;
+export const TEXT_SIZE_MAX = 140 / DEFAULT_FRAME_HEIGHT;
 
 export const TEXT_COLORS: string[] = ["#FFFFFF", "#111111", "#F2C230", "#4C8DF6"];
+
+/** Where a new element lands: horizontally centred, in the lower third. */
+export const NEW_TEXT_X = 0.5;
+export const NEW_TEXT_Y = 0.78;
+
+export function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/**
+ * Font size in pixels for a frame `frameHeight` tall. The preview passes the height of
+ * the video rect on screen, the export passes the real frame height — same function,
+ * so the text occupies the same share of the picture in both.
+ */
+export function textFontPx(el: Pick<TextElement, "size">, frameHeight: number): number {
+  return Math.max(6, Math.round(el.size * frameHeight));
+}
+
+/** drawtext's boxborderw, derived from the font size so the plate scales with the text. */
+export function textBoxPad(fontPx: number): number {
+  return Math.max(2, Math.round(fontPx * 0.25));
+}
+
+/** Elements that actually produce a drawtext. Empty input ⇒ no drawtext in the graph. */
+export function drawableTexts(texts: TextElement[] | undefined | null): TextElement[] {
+  return (texts ?? []).filter((t) => !!t.text?.trim());
+}
 
 /**
  * Bottom of both gain sliders. At this value the original audio is not merely attenuated —
@@ -46,8 +80,12 @@ export type ComposeInput = Partial<EditSettings> & {
   /** Absolute filesystem path to write. */
   outFile: string;
   fontPath: string;
-  /** File holding the overlay text — see overlayTextPath. */
-  textPath: string;
+  /**
+   * One file per drawable text element, in the order `drawableTexts(texts)` returns —
+   * see overlayTextPath. A caller that passes fewer paths than elements gets fewer
+   * drawtext filters, never a drawtext with no text.
+   */
+  textPaths: string[];
   trimIn: number;
   trimOut: number;
   /** Absolute path to the music bed, or null for no mix. */
@@ -58,13 +96,11 @@ export function buildComposeCommand({
   srcPath,
   outFile,
   fontPath,
-  textPath,
+  textPaths,
   trimIn,
   trimOut,
-  text,
-  textPosition = "lower",
-  textSize = "M",
-  textColor = "#FFFFFF",
+  texts,
+  frameHeight = DEFAULT_FRAME_HEIGHT,
   musicPath,
   musicGainDb = -6,
   originalGainDb = -18,
@@ -78,20 +114,31 @@ export function buildComposeCommand({
   // it actually stops. See the length-mismatch note there.
   if (musicPath) parts.push(`-stream_loop -1 -i "${musicPath}"`);
 
-  // video branch
-  if (text?.trim()) {
-    const pos = TEXT_POSITIONS[textPosition] ?? TEXT_POSITIONS.lower;
-    const size = TEXT_SIZES[textSize] ?? TEXT_SIZES.M;
-    const hex = textColor.replace("#", "0x");
-    // textfile= keeps ':' and quotes out of the graph; expansion=none stops drawtext
-    // expanding '%' and '{}' — without it "50%" renders nothing and still exits 0.
-    filters.push(
-      `[0:v]drawtext=fontfile='${fontPath}':textfile='${textPath}':reload=0:expansion=none:` +
-        `x=(w-tw)/2:y=${pos.y}:fontsize=${size}:fontcolor=${hex}:` +
-        `box=1:boxcolor=black@0.5:boxborderw=16[v]`
-    );
-  } else {
+  // video branch — one drawtext per element, chained. No elements means no drawtext at
+  // all (a plain null), which is what keeps an empty overlay set artefact-free.
+  const drawn = drawableTexts(texts).slice(0, textPaths.length);
+  if (!drawn.length) {
     filters.push(`[0:v]null[v]`);
+  } else {
+    drawn.forEach((el, i) => {
+      const from = i === 0 ? "0:v" : `vt${i}`;
+      const to = i === drawn.length - 1 ? "v" : `vt${i + 1}`;
+      const fontPx = textFontPx(el, frameHeight);
+      const hex = (el.color || "#FFFFFF").replace("#", "0x");
+      // x/y place the CENTRE of the rendered box at the element's normalised point, so
+      // the exported frame matches the editor ghost whatever the source resolution is.
+      // fontsize stays a plain integer: drawtext's expression support for it varies by
+      // build, and frameHeight is already known here.
+      const x = `w*${clamp01(el.x).toFixed(4)}-text_w/2`;
+      const y = `h*${clamp01(el.y).toFixed(4)}-text_h/2`;
+      // textfile= keeps ':' and quotes out of the graph; expansion=none stops drawtext
+      // expanding '%' and '{}' — without it "50%" renders nothing and still exits 0.
+      filters.push(
+        `[${from}]drawtext=fontfile='${fontPath}':textfile='${textPaths[i]}':reload=0:expansion=none:` +
+          `x=${x}:y=${y}:fontsize=${fontPx}:fontcolor=${hex}:` +
+          `box=1:boxcolor=black@0.5:boxborderw=${textBoxPad(fontPx)}[${to}]`
+      );
+    });
   }
 
   // audio branch
@@ -166,14 +213,16 @@ export async function runExport(
   // settings.music is the on/off toggle; musicTrackId picks WHICH bundled bed.
   const musicPath = settings.music ? await musicTrackPath(settings.musicTrackId) : null;
   const out = outPath("reellab-export.mp4");
-  const textPath = overlayTextPath(settings.text ?? "");
+  // One file per element, indexed so they do not overwrite one another.
+  const textPaths = drawableTexts(settings.texts).map((el, i) => overlayTextPath(el.text, i));
 
   const cmd = buildComposeCommand({
     ...settings,
     srcPath: toPath(settings.sourceUri),
     outFile: out.path,
     fontPath,
-    textPath,
+    textPaths,
+    // Already null when the toggle is off — see where musicPath is resolved above.
     musicPath,
   });
 

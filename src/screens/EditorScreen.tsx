@@ -10,11 +10,23 @@ import { useFilmstrip } from "../hooks/useFilmstrip";
 import { useTrimmedPlayback } from "../hooks/useTrimmedPlayback";
 import { clampIn, clampOut } from "../trim";
 import { timecode } from "../clips";
-import { MUTE_DB, TEXT_COLORS, TEXT_POSITIONS, TEXT_SIZES } from "../export";
-import type { TextPositionDef } from "../export";
+import { MUTE_DB } from "../export";
+import {
+  clamp01,
+  DEFAULT_FRAME_HEIGHT,
+  DEFAULT_FRAME_WIDTH,
+  NEW_TEXT_X,
+  NEW_TEXT_Y,
+  TEXT_COLORS,
+  TEXT_SIZE_MAX,
+  TEXT_SIZE_MIN,
+  TEXT_SIZE_PRESETS,
+  textBoxPad,
+  textFontPx,
+} from "../export";
+import type { Clip, EditSettings, TextElement, TextSizePreset } from "../types";
 import { MUSIC_CREDIT, MUSIC_TRACKS } from "../assets";
 import type { MusicTrack } from "../assets";
-import type { Clip, EditSettings, TextPosition, TextSize } from "../types";
 import type { Dispatch, SetStateAction } from "react";
 
 const FRAME_COUNT = 10;
@@ -34,6 +46,131 @@ function fitLabel(track: { seconds: number }, clipLength: number) {
   if (track.seconds < cut - 0.05) return `loops to ${cut.toFixed(1)}s`;
   if (track.seconds > cut + 0.05) return `trimmed to ${cut.toFixed(1)}s`;
   return "exact fit";
+}
+
+/** A rect in preview pixels. */
+type Rect = { x: number; y: number; w: number; h: number };
+
+/**
+ * Where the video actually sits inside the 16:9 preview box under contentFit="contain".
+ *
+ * The overlay must be positioned against the PICTURE, not against the box — a portrait
+ * clip is letterboxed, and placing a caption at y=0.9 of the box would put it on the black
+ * bar, somewhere the exported frame has nothing at all.
+ */
+function fitRect(aspect: number, box: { w: number; h: number }): Rect {
+  if (!box.w || !box.h || !aspect) return { x: 0, y: 0, w: box.w, h: box.h };
+  const wide = aspect > box.w / box.h;
+  const w = wide ? box.w : box.h * aspect;
+  const h = wide ? box.w / aspect : box.h;
+  return { x: (box.w - w) / 2, y: (box.h - h) / 2, w, h };
+}
+
+let textSeq = 0;
+
+function newTextElement(): TextElement {
+  textSeq += 1;
+  return {
+    id: `t${Date.now().toString(36)}-${textSeq}`,
+    text: "",
+    x: NEW_TEXT_X,
+    y: NEW_TEXT_Y,
+    size: TEXT_SIZE_PRESETS.M,
+    color: TEXT_COLORS[0],
+  };
+}
+
+/**
+ * One caption on the preview, draggable with PanResponder.
+ *
+ * PanResponder rather than a gesture library on purpose: react-native-gesture-handler is
+ * not installed, and adding it would force a dev-client rebuild for everyone.
+ *
+ * The drag is local state while the finger is down and is committed to the edit settings
+ * on release — one settings update per gesture instead of one per frame, which keeps the
+ * filmstrip and the panel from re-rendering 60 times a second.
+ */
+function CaptionGhost({
+  el,
+  rect,
+  draggable,
+  selected,
+  onSelect,
+  onCommit,
+}: {
+  el: TextElement;
+  rect: Rect;
+  draggable: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  onCommit: (x: number, y: number) => void;
+}) {
+  const s = useStyles();
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+
+  // The PanResponder is created once, so everything it reads lives in refs.
+  const live = useRef({ el, rect, draggable, onSelect, onCommit });
+  live.current = { el, rect, draggable, onSelect, onCommit };
+  const from = useRef({ x: 0, y: 0 });
+  const at = useRef({ x: 0, y: 0 });
+
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => live.current.draggable,
+        onMoveShouldSetPanResponder: () => live.current.draggable,
+        onPanResponderGrant: () => {
+          from.current = { x: live.current.el.x, y: live.current.el.y };
+          at.current = from.current;
+          setDrag(from.current);
+          live.current.onSelect();
+        },
+        onPanResponderMove: (_e, g) => {
+          const r = live.current.rect;
+          if (!r.w || !r.h) return;
+          at.current = {
+            x: clamp01(from.current.x + g.dx / r.w),
+            y: clamp01(from.current.y + g.dy / r.h),
+          };
+          setDrag(at.current);
+        },
+        onPanResponderRelease: () => {
+          live.current.onCommit(at.current.x, at.current.y);
+          setDrag(null);
+        },
+        onPanResponderTerminate: () => setDrag(null),
+      }),
+    []
+  );
+
+  const pos = drag ?? { x: el.x, y: el.y };
+  // The same two helpers the exporter uses — see src/export.ts.
+  const fontSize = textFontPx(el, rect.h || DEFAULT_FRAME_HEIGHT);
+  const pad = textBoxPad(fontSize);
+
+  return (
+    <View
+      {...pan.panHandlers}
+      onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+      style={[
+        s.caption,
+        {
+          left: rect.x + pos.x * rect.w - box.w / 2,
+          top: rect.y + pos.y * rect.h - box.h / 2,
+          paddingHorizontal: pad,
+          paddingVertical: Math.round(pad * 0.5),
+        },
+        draggable && (selected ? s.captionSelected : s.captionIdle),
+      ]}
+    >
+      <Text
+        style={[s.captionText, { fontSize, lineHeight: Math.round(fontSize * 1.2), color: el.color }]}
+      >
+        {el.text}
+      </Text>
+    </View>
+  );
 }
 
 function Bar({
@@ -86,6 +223,8 @@ export default function EditorScreen({
   const [position, setPosition] = useState(0);
   const [loadedDuration, setLoadedDuration] = useState(0);
   const stripWidth = useRef(0);
+  const [previewBox, setPreviewBox] = useState({ w: 0, h: 0 });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const player = useVideoPlayer(clip.uri, (p) => {
     p.loop = false;
@@ -193,6 +332,52 @@ export default function EditorScreen({
   const playPct = Math.max(0, Math.min(100, (position / duration) * 100));
   const length = Math.max(0, trimOut - trimIn);
 
+  // --- text overlay -------------------------------------------------------------------
+  //
+  // The real frame size, once expo-video reports it. Font sizes and the preview rect are
+  // both derived from it, so what the ghost shows is what drawtext will burn in. Until it
+  // arrives (or if the platform never reports it) the export falls back to 1920×1080.
+  useEffect(() => {
+    const apply = (size?: { width: number; height: number } | null) => {
+      if (!size?.width || !size?.height) return;
+      set({ frameWidth: size.width, frameHeight: size.height });
+    };
+    apply(player.videoTrack?.size);
+    const loaded = player.addListener("sourceLoad", (e) => apply(e.availableVideoTracks?.[0]?.size));
+    const changed = player.addListener("videoTrackChange", (e) => apply(e.videoTrack?.size));
+    return () => {
+      loaded.remove();
+      changed.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player]);
+
+  const texts = settings.texts ?? [];
+  const frameW = settings.frameWidth || DEFAULT_FRAME_WIDTH;
+  const frameH = settings.frameHeight || DEFAULT_FRAME_HEIGHT;
+  const videoRect = useMemo(() => fitRect(frameW / frameH, previewBox), [frameW, frameH, previewBox]);
+  const selected = texts.find((t) => t.id === selectedId) ?? null;
+
+  const patchText = (id: string, patch: Partial<TextElement>) =>
+    set({ texts: texts.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
+
+  const addText = () => {
+    const el = newTextElement();
+    // Stagger new elements so a second one does not land exactly on the first.
+    const nth = texts.length;
+    el.y = clamp01(NEW_TEXT_Y - nth * 0.12);
+    set({ texts: [...texts, el] });
+    setSelectedId(el.id);
+  };
+
+  const removeText = (id: string) => {
+    // Removing the last element leaves an empty array, and an empty array means the graph
+    // gets no drawtext at all — that is the clean-export criterion.
+    set({ texts: texts.filter((t) => t.id !== id) });
+    if (selectedId === id) setSelectedId(null);
+  };
+
+
   function seekFromStrip(x: number) {
     if (!stripWidth.current) return;
     const t = Math.max(0, Math.min(duration, (x / stripWidth.current) * duration));
@@ -217,14 +402,25 @@ export default function EditorScreen({
         </Pressable>
       </View>
 
-      <View style={s.preview}>
+      <View
+        style={s.preview}
+        onLayout={(e) =>
+          setPreviewBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
+        }
+      >
         <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="contain" nativeControls={false} />
         <Text style={s.previewMeta}>source clip · {clip.durationLabel}</Text>
-        {tab === "text" && settings.text?.trim() ? (
-          <View style={[s.overlayGhost, TEXT_POSITIONS[settings.textPosition]?.preview]}>
-            <Text style={s.overlayGhostText}>{settings.text}</Text>
-          </View>
-        ) : null}
+        {texts.map((el) => (
+          <CaptionGhost
+            key={el.id}
+            el={el}
+            rect={videoRect}
+            draggable={tab === "text"}
+            selected={el.id === selectedId}
+            onSelect={() => setSelectedId(el.id)}
+            onCommit={(x, y) => patchText(el.id, { x, y })}
+          />
+        ))}
         <Pressable
           onPress={() => (playing ? player.pause() : playInRange())}
           style={s.playButton}
@@ -357,69 +553,92 @@ export default function EditorScreen({
 
           {tab === "text" ? (
             <View>
-              <TextInput
-                value={settings.text}
-                onChangeText={(text) => set({ text })}
-                placeholder="Text to burn in"
-                placeholderTextColor={c.w38}
-                style={s.textField}
-              />
-              <View style={s.segRow}>
-                {(Object.entries(TEXT_POSITIONS) as [TextPosition, TextPositionDef][]).map(([key, def]) => {
-                  const on = settings.textPosition === key;
-                  return (
-                    <Pressable
-                      key={key}
-                      onPress={() => set({ textPosition: key })}
-                      style={[s.seg, on && s.segOn]}
-                    >
-                      <Text style={[s.segText, on && s.segTextOn]}>{def.label}</Text>
+              {texts.map((el, i) => {
+                const on = el.id === selectedId;
+                return (
+                  <View key={el.id} style={[s.textRow, on && s.textRowOn]}>
+                    <Pressable onPress={() => setSelectedId(el.id)} hitSlop={8}>
+                      <Text style={[s.textIndex, on && s.textIndexOn]}>{i + 1}</Text>
                     </Pressable>
-                  );
-                })}
-              </View>
+                    <TextInput
+                      value={el.text}
+                      onFocus={() => setSelectedId(el.id)}
+                      onChangeText={(text) => patchText(el.id, { text })}
+                      placeholder="Text to burn in"
+                      placeholderTextColor={c.w38}
+                      style={s.textField}
+                    />
+                    <Pressable onPress={() => removeText(el.id)} hitSlop={8}>
+                      <Text style={s.removeLabel}>REMOVE</Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
 
-              <View style={s.inlineRow}>
-                <Text style={type.control}>Size</Text>
-                <View style={s.sizeRow}>
-                  {(Object.keys(TEXT_SIZES) as TextSize[]).map((key) => {
-                    const on = settings.textSize === key;
-                    return (
-                      <Pressable
-                        key={key}
-                        onPress={() => set({ textSize: key })}
-                        style={[s.sizeBox, on && s.sizeBoxOn]}
-                      >
-                        <Text style={[s.sizeText, on && s.sizeTextOn]}>{key}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
+              <Pressable onPress={addText} style={s.addRow}>
+                <Text style={s.addLabel}>{texts.length ? "+ ADD ANOTHER" : "+ ADD TEXT"}</Text>
+              </Pressable>
 
-              <View style={s.inlineRow}>
-                <Text style={type.control}>Colour</Text>
-                <View style={s.swatchRow}>
-                  {TEXT_COLORS.map((hex) => {
-                    const on = settings.textColor === hex;
-                    return (
-                      <Pressable key={hex} onPress={() => set({ textColor: hex })}>
-                        <View
-                          style={[
-                            s.swatch,
-                            { backgroundColor: hex },
-                            hex === "#111111" && s.swatchDark,
-                            on && s.swatchOn,
-                          ]}
-                        />
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
+              {selected ? (
+                <>
+                  <View style={s.inlineRow}>
+                    <Text style={type.control}>Size</Text>
+                    <View style={s.sizeRow}>
+                      <Text style={s.dbText}>{textFontPx(selected, frameH)} px</Text>
+                      {(Object.keys(TEXT_SIZE_PRESETS) as TextSizePreset[]).map((key) => {
+                        const on = Math.abs(selected.size - TEXT_SIZE_PRESETS[key]) < 0.001;
+                        return (
+                          <Pressable
+                            key={key}
+                            onPress={() => patchText(selected.id, { size: TEXT_SIZE_PRESETS[key] })}
+                            style={[s.sizeBox, on && s.sizeBoxOn]}
+                          >
+                            <Text style={[s.sizeText, on && s.sizeTextOn]}>{key}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                  {/* Continuous between the presets — the boxes are just three landmarks. */}
+                  <Bar
+                    value={(selected.size - TEXT_SIZE_MIN) / (TEXT_SIZE_MAX - TEXT_SIZE_MIN)}
+                    onChange={(v) =>
+                      patchText(selected.id, {
+                        size: TEXT_SIZE_MIN + v * (TEXT_SIZE_MAX - TEXT_SIZE_MIN),
+                      })
+                    }
+                    tint={c.accent}
+                  />
+
+                  <View style={s.inlineRow}>
+                    <Text style={type.control}>Colour</Text>
+                    <View style={s.swatchRow}>
+                      {TEXT_COLORS.map((hex) => {
+                        const on = selected.color === hex;
+                        return (
+                          <Pressable key={hex} onPress={() => patchText(selected.id, { color: hex })}>
+                            <View
+                              style={[
+                                s.swatch,
+                                { backgroundColor: hex },
+                                hex === "#111111" && s.swatchDark,
+                                on && s.swatchOn,
+                              ]}
+                            />
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                </>
+              ) : null}
 
               <Text style={[type.note, s.note]}>
-                Burned in at export — not a live layer on the saved file.
+                {texts.length
+                  ? selected
+                    ? "Drag the dashed box on the preview to place it. Burned in at export — not a live layer on the saved file."
+                    : "Tap an element to edit its size and colour, or drag it on the preview."
+                  : "No text yet. Add one, then drag it on the preview to place it."}
               </Text>
             </View>
           ) : null}
@@ -532,18 +751,18 @@ const useStyles = themedStyles(({ c }) => ({
     fontSize: 9.5,
     color: c.w30,
   },
-  overlayGhost: {
+  // The caption ghost. Geometry (position, font size, padding) is computed at render time
+  // from the element's normalised values — nothing about it is hard-coded here.
+  caption: {
     position: "absolute",
-    alignSelf: "center",
-    bottom: 34,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    borderColor: c.accent,
     borderRadius: 6,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    borderWidth: 1.5,
+    borderColor: "transparent",
   },
-  overlayGhostText: { fontFamily: font.sans, fontSize: 15, fontWeight: "600", color: "#fff" },
+  captionSelected: { borderStyle: "dashed", borderColor: c.accent },
+  captionIdle: { borderStyle: "dashed", borderColor: c.w22 },
+  captionText: { fontFamily: font.sans, fontWeight: "600", textShadowColor: "rgba(0,0,0,0.7)", textShadowRadius: 3 },
   playButton: {
     position: "absolute",
     alignSelf: "center",
@@ -650,30 +869,39 @@ const useStyles = themedStyles(({ c }) => ({
   ghostText: { fontFamily: font.sans, fontSize: 12.5, fontWeight: "500", color: c.textButton },
   note: { marginTop: 14 },
 
-  textField: {
+  textRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     paddingHorizontal: 13,
-    paddingVertical: 12,
+    paddingVertical: 4,
+    marginBottom: 8,
     borderRadius: 10,
     backgroundColor: c.inset,
     borderWidth: 1,
-    borderColor: c.accentBorder,
+    borderColor: c.w14,
+  },
+  textRowOn: { borderColor: c.accentBorder },
+  textIndex: { fontFamily: font.mono, fontSize: 11, fontWeight: "500", color: c.w38 },
+  textIndexOn: { color: c.accentSoft },
+  textField: {
+    flex: 1,
+    paddingVertical: 10,
     fontFamily: font.sans,
     fontSize: 14,
     color: c.text,
   },
-  segRow: { flexDirection: "row", gap: 6, marginTop: 12 },
-  seg: {
-    flex: 1,
+  removeLabel: { fontFamily: font.mono, fontSize: 10, letterSpacing: 0.6, color: c.w38 },
+  addRow: {
     height: 36,
-    borderRadius: 8,
+    borderRadius: isIOS ? 8 : 99,
     borderWidth: 1,
+    borderStyle: "dashed",
     borderColor: c.w14,
     alignItems: "center",
     justifyContent: "center",
   },
-  segOn: { backgroundColor: c.accentBgStrong, borderColor: c.accentBorder },
-  segText: { fontFamily: font.sans, fontSize: 11.5, fontWeight: "500", color: c.w60 },
-  segTextOn: { fontWeight: "600", color: c.accentSoft },
+  addLabel: { fontFamily: font.mono, fontSize: 10.5, letterSpacing: 0.6, color: c.w60 },
 
   inlineRow: {
     flexDirection: "row",
@@ -681,7 +909,7 @@ const useStyles = themedStyles(({ c }) => ({
     justifyContent: "space-between",
     marginTop: 16,
   },
-  sizeRow: { flexDirection: "row", gap: 6 },
+  sizeRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   sizeBox: {
     width: 38,
     height: 32,

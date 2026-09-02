@@ -57,10 +57,7 @@ const ExportProgressContext = createContext<ExportProgress>({ progress: 0, elaps
 export const defaultSettings = (clip: Clip | null): EditSettings => ({
   trimIn: 0,
   trimOut: clip?.duration || 5,
-  text: "",
-  textPosition: "lower",
-  textSize: "M",
-  textColor: "#FFFFFF",
+  texts: [],
   music: false,
   musicTrackId: "pulse",
   musicGainDb: -6,

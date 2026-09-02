@@ -39,19 +39,48 @@ export type Clip = {
 /** Keys of MUSIC_TRACKS in src/assets.ts — which bundled bed to mix in. */
 export type MusicTrackId = "pulse" | "drift" | "ticker";
 
-/** Keys of TEXT_POSITIONS in src/export.ts. */
-export type TextPosition = "top" | "lower" | "bottom";
-/** Keys of TEXT_SIZES in src/export.ts. */
-export type TextSize = "S" | "M" | "L";
+/** Keys of TEXT_SIZE_PRESETS in src/export.ts — the design's S / M / L boxes. */
+export type TextSizePreset = "S" | "M" | "L";
+
+/**
+ * One burned-in caption.
+ *
+ * Geometry is stored NORMALISED — as fractions of the video frame, never in pixels —
+ * because the editor's preview and FFmpeg's `drawtext` are two different coordinate
+ * systems, and the only way they can agree is by deriving from the same number:
+ *
+ *   preview: left = rect.x + x * rect.w     export: x=w*<x>-text_w/2
+ *   preview: fontSize = size * rect.h       export: fontsize=round(size * frameHeight)
+ *
+ * `x`/`y` are the CENTRE of the text box, 0…1. `size` is the font size as a fraction of
+ * the frame height (0.059 ≈ 64px on a 1080p frame — the old "M" preset).
+ */
+export type TextElement = {
+  id: string;
+  text: string;
+  /** Centre of the box, as a fraction of frame width. 0…1. */
+  x: number;
+  /** Centre of the box, as a fraction of frame height. 0…1. */
+  y: number;
+  /** Font size as a fraction of frame height. */
+  size: number;
+  /** "#RRGGBB" — one of TEXT_COLORS, or anything drawtext accepts. */
+  color: string;
+};
 
 /** The staged edit. Handed to runExport as-is, plus a sourceUri. */
 export type EditSettings = {
   trimIn: number;
   trimOut: number;
-  text: string;
-  textPosition: TextPosition;
-  textSize: TextSize;
-  textColor: string;
+  /** Every caption to burn in. Empty means no drawtext at all in the filter graph. */
+  texts: TextElement[];
+  /**
+   * The source video's pixel size, once expo-video reports it. Optional because the
+   * editor only learns it after the player loads; export falls back to 1920×1080.
+   * Font sizes resolve against `frameHeight`, so preview px and drawtext px match.
+   */
+  frameWidth?: number;
+  frameHeight?: number;
   /** The editor's on/off toggle for the music bed. */
   music: boolean;
   /** Which bundled bed to mix in when `music` is on. */

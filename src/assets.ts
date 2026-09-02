@@ -119,9 +119,11 @@ export function outPath(name: string) {
  * drawtext's `text=` is parsed as part of the filter string, so ':' , '\' and quotes in
  * user input break the graph (or worse, inject filter options). `textfile=` reads the
  * literal bytes instead, so arbitrary text — including emoji and Serbian diacritics — is safe.
+ *
+ * `index` keeps the files of multiple overlay elements apart within one export.
  */
-export function overlayTextPath(text: string | null | undefined): string {
-  const f = new File(Paths.cache, "spike-overlay.txt");
+export function overlayTextPath(text: string | null | undefined, index = 0): string {
+  const f = new File(Paths.cache, `spike-overlay-${index}.txt`);
   if (f.exists) f.delete();
   f.create();
   f.write(text ?? "");
