@@ -16,9 +16,11 @@ import { font, isIOS, themedStyles, useTheme } from "../../src/theme";
 import { getHealth, getProfile } from "../../api/client";
 import { errorMessage } from "../../src/errors";
 import { fetchMyVideos } from "../../src/library";
+import { isLocalOnly, localFootprint } from "../../src/localClips";
 import { useClips } from "../../src/state/ClipsContext";
 import ProfileCard from "../../src/profile/ProfileCard";
 import VideoTile from "../../src/profile/VideoTile";
+import LocalClipSheet from "../../src/profile/LocalClipSheet";
 import Card from "../../src/ui/Card";
 import Button from "../../src/ui/Button";
 import ErrorBox from "../../src/ui/ErrorBox";
@@ -57,7 +59,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { c, type } = useTheme();
   const s = useStyles();
-  const { clips, selectClip } = useClips();
+  const { clips, selectClip, removeClip } = useClips();
   const { user: me, signOut } = useAuth();
 
   const [health, setHealth] = useState<Health | null>(null);
@@ -68,6 +70,8 @@ export default function ProfileScreen() {
   const [videosError, setVideosError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<Tab>("videos");
+  // The local clip being played, if any. Null closes the sheet and releases its player.
+  const [preview, setPreview] = useState<Clip | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -115,11 +119,28 @@ export default function ProfileScreen() {
   );
 
   const shown = tab === "videos" ? published : tab === "drafts" ? drafts : [];
+  const footprint = useMemo(() => localFootprint(local), [local]);
 
   const up = health?.status === "UP";
   const dbStatus = health?.components?.db?.status;
 
+  /**
+   * Tapping a tile.
+   *
+   * A device-only clip opens the player, not the editor: this list is where you go to
+   * watch what you have recorded, and "open" meaning "start editing" made watching your
+   * own clip impossible. The sheet still offers Edit, so the destructive-ish path is one
+   * explicit press rather than the default. A server clip has nothing local to preview,
+   * so it keeps going straight to the editor.
+   */
   function open(clip: Clip) {
+    if (isLocalOnly(clip)) return setPreview(clip);
+    selectClip(clip);
+    router.push("/editor");
+  }
+
+  function editFromPreview(clip: Clip) {
+    setPreview(null);
     selectClip(clip);
     router.push("/editor");
   }
@@ -183,6 +204,26 @@ export default function ProfileScreen() {
         value={tab}
         onChange={setTab}
       />
+
+      {/*
+        The DRAFTS tab mixes two genuinely different things: server drafts, which exist in
+        the account and are merely unpublished, and clips that have never left this phone.
+        This says so once, above the grid, so the DEVICE ONLY chips on the tiles are read
+        as a category rather than as a per-tile oddity.
+      */}
+      {tab === "drafts" && footprint.count > 0 ? (
+        <View style={s.localNote}>
+          <View style={s.localHead}>
+            <Text style={s.localLabel}>ON THIS DEVICE</Text>
+            <Text style={s.localMeta}>{footprint.label}</Text>
+          </View>
+          <Text style={type.note}>
+            Clips marked DEVICE ONLY are saved in this app only. They are not published, no
+            one else can see them, and they carry no likes or comments. Open one to play it,
+            edit it, or delete it — deleting removes the file from this device.
+          </Text>
+        </View>
+      ) : null}
 
       {videosError ? <ErrorBox message={videosError} onRetry={load} /> : null}
 
@@ -262,6 +303,19 @@ export default function ProfileScreen() {
           <RefreshControl refreshing={loading} onRefresh={load} tintColor={c.w50} />
         }
       />
+
+      {/*
+        Mounted only while a clip is being previewed, so closing the sheet unmounts the
+        player rather than leaving one alive behind the grid.
+      */}
+      {preview ? (
+        <LocalClipSheet
+          clip={preview}
+          onClose={() => setPreview(null)}
+          onEdit={editFromPreview}
+          onDelete={removeClip}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -288,6 +342,17 @@ const useStyles = themedStyles(({ c }) => ({
   sectionHead: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" },
   sectionMeta: { fontFamily: font.mono, fontSize: 11.5, color: c.w38 },
   empty: { textAlign: "center", paddingVertical: 32 },
+  localNote: {
+    padding: 14,
+    gap: 8,
+    borderRadius: 14,
+    backgroundColor: c.accentBgFaint,
+    borderWidth: 1,
+    borderColor: c.accentBorderFaint,
+  },
+  localHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  localLabel: { fontFamily: font.mono, fontSize: 11, fontWeight: "500", letterSpacing: 1, color: c.accentSoft },
+  localMeta: { fontFamily: font.mono, fontSize: 11, color: c.w50 },
   footer: { paddingHorizontal: 18, paddingTop: 14, gap: 14 },
   row: { gap: 3 },
   rowValue: { fontFamily: font.mono, fontSize: 12, color: c.text },
