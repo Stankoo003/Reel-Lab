@@ -46,7 +46,7 @@ export default function VideoTile({
           chip, because it is the one thing about this tile a viewer must not miss.
         */}
         <View style={[s.chip, s.chipViews, local && s.chipLocal]}>
-          <Text style={[type.chip, local && s.chipLocalText]}>{local ? "DEVICE ONLY" : "— ▸"}</Text>
+          <Text style={[type.chip, local && s.chipLocalText]}>{local ? "DEVICE ONLY" : `${compactCount(0)} ▸`}</Text>
         </View>
       </View>
 
@@ -84,10 +84,12 @@ export default function VideoTile({
               <Text style={s.chipLabel}>LIKES</Text>
               <Text style={s.chipValue}>{compactCount(clip.likeCount ?? 0)}</Text>
             </View>
-            {/* Comment counts are not on VideoResponse — the chip keeps the shape, not a number. */}
+            {/* Comment counts are not on VideoResponse yet, so this is a floor rather than a
+                measurement — same call as VIEWS above, and a dash beside a number in the
+                same row would read as a rendering fault rather than as "unknown". */}
             <View style={s.chipMeta}>
               <Text style={s.chipLabel}>COMM</Text>
-              <Text style={s.chipValue}>—</Text>
+              <Text style={s.chipValue}>{compactCount(0)}</Text>
             </View>
           </>
         )}

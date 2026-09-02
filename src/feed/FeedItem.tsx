@@ -317,7 +317,7 @@ export default function FeedItem({
               <View style={s.railCircle}>
                 <Text style={s.railGlyph}>SHARE</Text>
               </View>
-              <Text style={s.railCaption}>—</Text>
+              <Text style={s.railCaption}>{compactCount(0)}</Text>
             </View>
           </View>
         ) : null}

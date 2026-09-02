@@ -256,9 +256,11 @@ export default function ProfileCard({
           <StatGrid
             stats={[
               { label: "VIDEOS", value: compactCount(activity?.publishedVideos ?? 0) },
-              // No view tracking exists on the server — see VideoResponse. The slot is the
-              // design's; the value is honest about being absent.
-              { label: "VIEWS", value: "—" },
+              // No view tracking exists on the server yet — see VideoResponse. Shown as 0
+              // rather than an em dash: for an account that has never been viewed 0 is also
+              // the true answer, and a dash in a row of numbers reads as a broken cell.
+              // Revisit when views land — until then this is a floor, not a measurement.
+              { label: "VIEWS", value: compactCount(0) },
               { label: "LIKES", value: compactCount(activity?.likesReceived ?? 0) },
             ]}
           />
