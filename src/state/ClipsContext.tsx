@@ -52,6 +52,7 @@ export const defaultSettings = (clip: Clip | null): EditSettings => ({
   textSize: "M",
   textColor: "#FFFFFF",
   music: false,
+  musicTrackId: "pulse",
   musicGainDb: -6,
   originalGainDb: -18,
 });

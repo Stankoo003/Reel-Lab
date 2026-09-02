@@ -7,13 +7,32 @@ import { Image } from "expo-image";
 import { font, isIOS, themedStyles, useTheme } from "../theme";
 import { usePlayerPlaying } from "../hooks/usePlayerPlaying";
 import { timecode } from "../clips";
-import { TEXT_COLORS, TEXT_POSITIONS, TEXT_SIZES } from "../export";
+import { MUTE_DB, TEXT_COLORS, TEXT_POSITIONS, TEXT_SIZES } from "../export";
 import type { TextPositionDef } from "../export";
+import { MUSIC_CREDIT, MUSIC_TRACKS } from "../assets";
+import type { MusicTrack } from "../assets";
 import type { Clip, EditSettings, TextPosition, TextSize } from "../types";
 import type { Dispatch, SetStateAction } from "react";
 import type { VideoThumbnail } from "expo-video";
 
 const FRAME_COUNT = 10;
+
+/** m:ss for a bed length. */
+function clock(seconds: number) {
+  const m = Math.floor(seconds / 60);
+  return `${m}:${String(Math.round(seconds - m * 60)).padStart(2, "0")}`;
+}
+
+/**
+ * What the export will do to this bed at the current cut length — stated up front, because
+ * the loop/trim decision is invisible until the file comes out. Mirrors src/export.ts.
+ */
+function fitLabel(track: { seconds: number }, clipLength: number) {
+  const cut = Math.max(0.1, clipLength);
+  if (track.seconds < cut - 0.05) return `loops to ${cut.toFixed(1)}s`;
+  if (track.seconds > cut + 0.05) return `trimmed to ${cut.toFixed(1)}s`;
+  return "exact fit";
+}
 
 function Bar({
   value,
@@ -308,28 +327,46 @@ export default function EditorScreen({
 
           {tab === "audio" ? (
             <View>
-              <Pressable
-                onPress={() => set({ music: !settings.music })}
-                style={s.trackRow}
-              >
-                <View style={s.wave}>
-                  {[40, 80, 55, 100, 35, 70].map((h, i) => (
-                    <View key={i} style={[s.waveBar, { height: `${h}%` }]} />
-                  ))}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={type.body}>spike-music.m4a</Text>
-                  <Text style={s.trackMeta}>0:15 · 44.1 kHz</Text>
-                </View>
-                <Text
-                  style={[
-                    type.badge,
-                    { color: settings.music ? c.success : c.w35 },
-                  ]}
-                >
-                  {settings.music ? "MIXED IN" : "OFF"}
-                </Text>
-              </Pressable>
+              {MUSIC_TRACKS.map((track: MusicTrack) => {
+                const on = settings.music && settings.musicTrackId === track.id;
+                return (
+                  <Pressable
+                    key={track.id}
+                    // Tapping the bed that is already mixed in turns music off — the row is
+                    // both the picker and the toggle, so there is no separate "none" entry.
+                    onPress={() =>
+                      set(
+                        on
+                          ? { music: false }
+                          : { music: true, musicTrackId: track.id }
+                      )
+                    }
+                    style={[s.trackRow, on && s.trackRowOn]}
+                  >
+                    <View style={s.wave}>
+                      {track.wave.map((h, i) => (
+                        <View
+                          key={i}
+                          style={[
+                            s.waveBar,
+                            { height: `${h}%` },
+                            on && { backgroundColor: c.accent },
+                          ]}
+                        />
+                      ))}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={type.body}>{track.name}</Text>
+                      <Text style={s.trackMeta}>
+                        {clock(track.seconds)} · {track.blurb} · {fitLabel(track, length)}
+                      </Text>
+                    </View>
+                    <Text style={[type.badge, { color: on ? c.success : c.w35 }]}>
+                      {on ? "MIXED IN" : "OFF"}
+                    </Text>
+                  </Pressable>
+                );
+              })}
 
               <View style={s.inlineRow}>
                 <Text style={type.control}>Track level</Text>
@@ -343,7 +380,9 @@ export default function EditorScreen({
 
               <View style={[s.inlineRow, { marginTop: 16 }]}>
                 <Text style={type.control}>Original video audio</Text>
-                <Text style={s.dbText}>{settings.originalGainDb} dB</Text>
+                <Text style={s.dbText}>
+                  {settings.originalGainDb <= MUTE_DB ? "MUTED" : `${settings.originalGainDb} dB`}
+                </Text>
               </View>
               <Bar
                 value={(settings.originalGainDb + 40) / 40}
@@ -351,7 +390,12 @@ export default function EditorScreen({
                 tint={c.w55}
               />
 
-              <Text style={[type.note, s.note]}>Mixed in the same pass as trim + text.</Text>
+              <Text style={[type.note, s.note]}>
+                Mixed in the same pass as trim + text. A bed shorter than the cut loops; a
+                longer one is trimmed. All the way down on the original means silence, not a
+                quiet track.
+              </Text>
+              <Text style={[type.note, s.credit]}>{MUSIC_CREDIT}</Text>
             </View>
           ) : null}
         </ScrollView>
@@ -545,7 +589,10 @@ const useStyles = themedStyles(({ c }) => ({
   swatchDark: { borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
   swatchOn: { borderWidth: 2, borderColor: c.accent },
 
+  credit: { marginTop: 6, color: c.w35 },
+
   trackRow: {
+    marginBottom: 8,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -556,6 +603,7 @@ const useStyles = themedStyles(({ c }) => ({
     borderWidth: 1,
     borderColor: c.w06,
   },
+  trackRowOn: { borderColor: c.accentBorder, backgroundColor: c.accentBgFaint },
   wave: { flexDirection: "row", alignItems: "flex-end", gap: 2, height: 22 },
   waveBar: { width: 2, backgroundColor: c.w30 },
   trackMeta: { marginTop: 3, fontFamily: font.mono, fontSize: 10, color: c.w38 },

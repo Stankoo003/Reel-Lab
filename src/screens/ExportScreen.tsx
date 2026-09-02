@@ -2,6 +2,7 @@
 import { View, Text, Pressable } from "react-native";
 import { font, isIOS, themedStyles, useTheme } from "../theme";
 import { timecode } from "../clips";
+import { musicTrack } from "../assets";
 import type { Clip, EditSettings } from "../types";
 
 function Op({ label, state, done }: { label: string; state: string; done: boolean }) {
@@ -47,7 +48,10 @@ export default function ExportScreen({
   const ops: { label: string; done: boolean; state?: string }[] = [
     { label: `Trim ${timecode(settings.trimIn)} → ${timecode(settings.trimOut)}`, done: true },
     { label: "Text overlay burn-in", done: !!settings.text?.trim() },
-    { label: "Audio mix · spike-music.m4a", done: !!settings.music },
+    {
+      label: `Audio mix · ${musicTrack(settings.musicTrackId).name}`,
+      done: !!settings.music,
+    },
     { label: "Write output file", done: false, state: "QUEUED" },
   ];
 
