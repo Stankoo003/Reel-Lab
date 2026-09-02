@@ -226,6 +226,7 @@ export default function ProfileCard({
             label="BIO"
             value={bio}
             onChangeText={setBio}
+            placeholder="Your wonderful bio"
             error={fieldErrors.bio}
             maxLength={MAX_BIO}
             multiline
