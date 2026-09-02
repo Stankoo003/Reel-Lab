@@ -1,17 +1,19 @@
 // Design 1c — Editor: timeline + trim / text / audio tabs.
 // The tabs are not a pipeline: they stage parameters, and Export runs one pass.
-import { useEffect, useRef, useState } from "react";
-import { View, Text, Pressable, TextInput, ScrollView, StyleSheet } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, PanResponder } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { Image } from "expo-image";
 import { font, isIOS, themedStyles, useTheme } from "../theme";
 import { usePlayerPlaying } from "../hooks/usePlayerPlaying";
+import { useFilmstrip } from "../hooks/useFilmstrip";
+import { useTrimmedPlayback } from "../hooks/useTrimmedPlayback";
+import { clampIn, clampOut } from "../trim";
 import { timecode } from "../clips";
 import { TEXT_COLORS, TEXT_POSITIONS, TEXT_SIZES } from "../export";
 import type { TextPositionDef } from "../export";
 import type { Clip, EditSettings, TextPosition, TextSize } from "../types";
 import type { Dispatch, SetStateAction } from "react";
-import type { VideoThumbnail } from "expo-video";
 
 const FRAME_COUNT = 10;
 
@@ -61,9 +63,9 @@ export default function EditorScreen({
 }) {
   const { c, type, tabState } = useTheme();
   const s = useStyles();
-  const [frames, setFrames] = useState<VideoThumbnail[]>([]);
   const [tab, setTab] = useState<Tab>("trim");
   const [position, setPosition] = useState(0);
+  const [loadedDuration, setLoadedDuration] = useState(0);
   const stripWidth = useRef(0);
 
   const player = useVideoPlayer(clip.uri, (p) => {
@@ -73,41 +75,109 @@ export default function EditorScreen({
   // Subscribed, not read off the player in render — see usePlayerPlaying.
   const playing = usePlayerPlaying(player);
 
-  const duration = clip.duration || 1;
-
   useEffect(() => {
     const sub = player.addListener("timeUpdate", (e) => setPosition(e.currentTime ?? 0));
     return () => sub.remove();
   }, [player]);
 
+  // A clip adopted from the gallery can arrive with duration 0; the player knows
+  // better once the source is loaded, and the filmstrip needs a real length to
+  // space its frames proportionally.
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const times = Array.from({ length: FRAME_COUNT }, (_, i) => (duration * i) / FRAME_COUNT);
-        const shots = await player.generateThumbnailsAsync(times, { maxWidth: 120 });
-        if (alive) setFrames(shots);
-      } catch {
-        // filmstrip is a nicety — the editor still works without it
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [player, duration]);
+    const sub = player.addListener("sourceLoad", (e) => setLoadedDuration(e.duration ?? 0));
+    return () => sub.remove();
+  }, [player]);
+
+  const duration = clip.duration > 0 ? clip.duration : loadedDuration || 1;
+
+  // Frames arrive one at a time, off the JS thread, with progress — see useFilmstrip.
+  const strip = useFilmstrip(player, clip.duration > 0 ? clip.duration : loadedDuration, FRAME_COUNT);
 
   const set = (patch: Partial<EditSettings>) =>
     setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
-  const inPct = (settings.trimIn / duration) * 100;
-  const outPct = 100 - (settings.trimOut / duration) * 100;
-  const playPct = (position / duration) * 100;
-  const length = Math.max(0, settings.trimOut - settings.trimIn);
+
+  // While a handle is dragged the range lives here, not in the shared settings:
+  // committing every move into the editor context would re-render every consumer of
+  // it at touch frequency. The commit happens once, on release.
+  const [drag, setDrag] = useState<{ in: number; out: number } | null>(null);
+  const trimIn = drag ? drag.in : settings.trimIn;
+  const trimOut = drag ? drag.out : settings.trimOut;
+
+  // The preview obeys the selection: playback loops inside [in, out].
+  const { playInRange, seek } = useTrimmedPlayback(player, trimIn, trimOut, setPosition);
+
+  // Latest values for the pan handlers, which are created once and must not close
+  // over a stale render.
+  const live = useRef({ duration, trimIn, trimOut, setSettings });
+  live.current = { duration, trimIn, trimOut, setSettings };
+  const dragRef = useRef<{ in: number; out: number } | null>(null);
+  const lastSeek = useRef(0);
+
+  // PanResponder, not react-native-gesture-handler: gesture-handler is not a
+  // dependency of this app and adding it would force a dev-client rebuild. Reanimated
+  // is available, but a worklet-driven handle would still have to hop back to JS for
+  // every in/out value — the trim points are React state that Export reads — so the
+  // UI-thread animation buys nothing here. Two handles on a 56pt strip is exactly
+  // what the built-in responder system is for.
+  const pans = useMemo(() => {
+    const make = (edge: "in" | "out") => {
+      let startIn = 0;
+      let startOut = 0;
+      const begin = () => {
+        startIn = live.current.trimIn;
+        startOut = live.current.trimOut;
+        dragRef.current = { in: startIn, out: startOut };
+        setDrag(dragRef.current);
+      };
+      const commit = () => {
+        const d = dragRef.current;
+        dragRef.current = null;
+        setDrag(null);
+        if (d) live.current.setSettings((prev) => (prev ? { ...prev, trimIn: d.in, trimOut: d.out } : prev));
+      };
+      return PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: begin,
+        onPanResponderMove: (_e, g) => {
+          const width = stripWidth.current;
+          const { duration } = live.current;
+          if (!width) return;
+          // dx-based, so no page/window coordinates are needed and the handle never
+          // jumps to the finger on grant.
+          const delta = (g.dx / width) * duration;
+          const next =
+            edge === "in"
+              ? { in: clampIn(startIn + delta, startOut), out: startOut }
+              : { in: startIn, out: clampOut(startOut + delta, startIn, duration) };
+          dragRef.current = next;
+          setDrag(next);
+          // Scrub the preview to the edge being dragged, throttled — seeking on every
+          // touch move floods the native player.
+          const now = Date.now();
+          if (now - lastSeek.current > 80) {
+            lastSeek.current = now;
+            seek(edge === "in" ? next.in : next.out);
+          }
+        },
+        onPanResponderRelease: commit,
+        onPanResponderTerminate: commit,
+      });
+    };
+    return { in: make("in"), out: make("out") };
+  }, [seek]);
+
+  const inPct = (trimIn / duration) * 100;
+  const outPct = 100 - (trimOut / duration) * 100;
+  const playPct = Math.max(0, Math.min(100, (position / duration) * 100));
+  const length = Math.max(0, trimOut - trimIn);
 
   function seekFromStrip(x: number) {
     if (!stripWidth.current) return;
     const t = Math.max(0, Math.min(duration, (x / stripWidth.current) * duration));
-    player.currentTime = t;
-    setPosition(t);
+    seek(t);
   }
 
   const tabs: [Tab, string][] = [
@@ -137,7 +207,7 @@ export default function EditorScreen({
           </View>
         ) : null}
         <Pressable
-          onPress={() => (playing ? player.pause() : player.play())}
+          onPress={() => (playing ? player.pause() : playInRange())}
           style={s.playButton}
           accessibilityRole="button"
           accessibilityLabel={playing ? "Pause preview" : "Play preview"}
@@ -160,7 +230,7 @@ export default function EditorScreen({
           onPress={(e) => seekFromStrip(e.nativeEvent.locationX)}
         >
           <View style={s.stripRow}>
-            {(frames.length ? frames : Array.from({ length: FRAME_COUNT })).map((f, i) =>
+            {strip.frames.map((f, i) =>
               f ? (
                 <Image key={i} source={f} style={s.frame} contentFit="cover" />
               ) : (
@@ -171,17 +241,46 @@ export default function EditorScreen({
           <View style={[s.scrim, { left: 0, width: `${inPct}%` }]} />
           <View style={[s.scrim, { right: 0, width: `${outPct}%` }]} />
           <View style={[s.selection, { left: `${inPct}%`, right: `${outPct}%` }]} />
-          <View style={[s.handle, { left: `${inPct}%`, transform: [{ translateX: -6 }] }]}>
-            <View style={s.handleGrip} />
+          {strip.extracting ? (
+            <View style={[s.stripProgress, { width: `${strip.progress * 100}%` }]} />
+          ) : null}
+          {/* Touch target is wider than the 12pt bar the design draws — a finger is not
+              12pt wide. The bar stays exactly where the design puts it. */}
+          <View
+            {...pans.in.panHandlers}
+            style={[s.handleHit, { left: `${inPct}%` }]}
+            hitSlop={{ top: 12, bottom: 12 }}
+            accessibilityRole="adjustable"
+            accessibilityLabel="Trim in point"
+            accessibilityValue={{ text: timecode(trimIn) }}
+          >
+            <View style={[s.handle, drag ? s.handleActive : null]}>
+              <View style={s.handleGrip} />
+            </View>
           </View>
-          <View style={[s.handle, { right: `${outPct}%`, transform: [{ translateX: 6 }] }]}>
-            <View style={s.handleGrip} />
+          <View
+            {...pans.out.panHandlers}
+            style={[s.handleHit, { left: `${100 - outPct}%` }]}
+            hitSlop={{ top: 12, bottom: 12 }}
+            accessibilityRole="adjustable"
+            accessibilityLabel="Trim out point"
+            accessibilityValue={{ text: timecode(trimOut) }}
+          >
+            <View style={[s.handle, drag ? s.handleActive : null]}>
+              <View style={s.handleGrip} />
+            </View>
           </View>
           <View style={[s.playhead, { left: `${playPct}%` }]} />
         </Pressable>
         <View style={s.stripLegend}>
           <Text style={s.legendText}>00:00</Text>
-          <Text style={s.legendText}>tap to scrub · {FRAME_COUNT} frames</Text>
+          <Text style={[s.legendText, strip.error ? { color: c.recText } : null]}>
+            {strip.error
+              ? strip.error
+              : strip.extracting
+                ? `extracting frames ${strip.done}/${strip.count}`
+                : `drag handles · tap to scrub · ${strip.count} frames`}
+          </Text>
           <Text style={s.legendText}>{timecode(duration)}</Text>
         </View>
       </View>
@@ -208,11 +307,11 @@ export default function EditorScreen({
               <View style={s.cardRow}>
                 <View style={s.card}>
                   <Text style={type.label}>IN</Text>
-                  <Text style={s.cardValue}>{timecode(settings.trimIn)}</Text>
+                  <Text style={s.cardValue}>{timecode(trimIn)}</Text>
                 </View>
                 <View style={s.card}>
                   <Text style={type.label}>OUT</Text>
-                  <Text style={s.cardValue}>{timecode(settings.trimOut)}</Text>
+                  <Text style={s.cardValue}>{timecode(trimOut)}</Text>
                 </View>
                 <View style={[s.card, s.cardAccent]}>
                   <Text style={[type.label, { color: "rgba(76,141,246,0.85)" }]}>LENGTH</Text>
@@ -221,13 +320,13 @@ export default function EditorScreen({
               </View>
               <View style={s.ghostRow}>
                 <Pressable
-                  onPress={() => set({ trimIn: Math.min(position, settings.trimOut - 0.2) })}
+                  onPress={() => set({ trimIn: clampIn(position, settings.trimOut) })}
                   style={s.ghost}
                 >
                   <Text style={s.ghostText}>Set in at playhead</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => set({ trimOut: Math.max(position, settings.trimIn + 0.2) })}
+                  onPress={() => set({ trimOut: clampOut(position, settings.trimIn, duration) })}
                   style={s.ghost}
                 >
                   <Text style={s.ghostText}>Set out</Text>
@@ -439,17 +538,29 @@ const useStyles = themedStyles(({ c }) => ({
     borderColor: c.accent,
     borderRadius: 6,
   },
-  handle: {
+  // The finger target: 28pt wide, centred on the boundary. Transparent, so the strip
+  // still looks like the design while being draggable.
+  handleHit: {
     position: "absolute",
     top: 0,
     bottom: 0,
+    width: 28,
+    marginLeft: -14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  handle: {
     width: 12,
+    height: "100%",
     borderRadius: 6,
     backgroundColor: c.accent,
     alignItems: "center",
     justifyContent: "center",
   },
+  handleActive: { backgroundColor: c.accentSoft },
   handleGrip: { width: 2, height: 16, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.8)" },
+  // Extraction progress, drawn along the bottom edge of the strip.
+  stripProgress: { position: "absolute", left: 0, bottom: 0, height: 2, backgroundColor: c.accent },
   playhead: { position: "absolute", top: -3, bottom: -3, width: 2, backgroundColor: c.text },
   stripLegend: { flexDirection: "row", justifyContent: "space-between", marginTop: 7 },
   legendText: { fontFamily: font.mono, fontSize: 9.5, color: c.w32 },
