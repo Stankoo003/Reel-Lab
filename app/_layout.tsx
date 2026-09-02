@@ -126,6 +126,8 @@ function RootNavigator() {
           <Stack.Screen name="user" options={{ presentation: "modal" }} />
           {/* The profile's link as a scannable code. Pushed from the profile's Share action. */}
           <Stack.Screen name="share" options={{ presentation: "modal" }} />
+          {/* Account, health and environment. Pushed from the profile's Settings action. */}
+          <Stack.Screen name="settings" options={{ presentation: "modal" }} />
         </Stack>
       <StatusBar style="auto" />
     </>

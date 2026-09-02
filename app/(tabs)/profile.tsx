@@ -1,19 +1,15 @@
-// Profile — the acting user, their video library, plus live backend health.
+// Profile — the acting user and their video library.
 //
 // Design 3a folds My videos into this page as a segmented section rather than a peer tab,
 // so the library sits under the identity it belongs to. That is why this screen is one
 // FlatList: the header, the grid and the settings blocks scroll as a single column, and a
 // grid nested inside a ScrollView would be a second scroll container.
-//
-// The health check is the acceptance criterion "app calls the backend health endpoint from
-// a device". It is a typed call like any other, because springdoc.show-actuator puts
-// /actuator/health in the published contract.
 import { useCallback, useMemo, useState } from "react";
 import { View, Text, Pressable, FlatList, RefreshControl } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { font, isIOS, themedStyles, useTheme } from "../../src/theme";
-import { getHealth, getProfile } from "../../api/client";
+import { getProfile } from "../../api/client";
 import { errorMessage } from "../../src/errors";
 import { fetchMyVideos } from "../../src/library";
 import { isLocalOnly, localFootprint } from "../../src/localClips";
@@ -25,9 +21,8 @@ import Card from "../../src/ui/Card";
 import Button from "../../src/ui/Button";
 import ErrorBox from "../../src/ui/ErrorBox";
 import Segmented from "../../src/ui/Segmented";
-import { API_BASE_URL, MEDIA_BASE_URL, APP_ENV } from "../../api/config";
 import { useAuth } from "../../src/state/AuthContext";
-import type { Health, Profile } from "../../api/client";
+import type { Profile } from "../../api/client";
 import type { Clip } from "../../src/types";
 
 type Tab = "videos" | "liked" | "drafts";
@@ -62,8 +57,6 @@ export default function ProfileScreen() {
   const { clips, selectClip, removeClip } = useClips();
   const { user: me, signOut } = useAuth();
 
-  const [health, setHealth] = useState<Health | null>(null);
-  const [healthError, setHealthError] = useState<string | null>(null);
   const [user, setUser] = useState<Profile | null>(null);
   const [userError, setUserError] = useState<string | null>(null);
   const [remote, setRemote] = useState<Clip[]>([]);
@@ -75,16 +68,8 @@ export default function ProfileScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    setHealthError(null);
     setUserError(null);
     setVideosError(null);
-    // Independent: a healthy backend with a missing user should still show health.
-    try {
-      setHealth(await getHealth());
-    } catch (e) {
-      setHealth(null);
-      setHealthError(errorMessage(e));
-    }
     try {
       // The gate keeps this screen behind a session, so an id is expected; guarding anyway
       // means a torn-down session during sign-out cannot fire a request for nobody.
@@ -121,8 +106,6 @@ export default function ProfileScreen() {
   const shown = tab === "videos" ? published : tab === "drafts" ? drafts : [];
   const footprint = useMemo(() => localFootprint(local), [local]);
 
-  const up = health?.status === "UP";
-  const dbStatus = health?.components?.db?.status;
 
   /**
    * Tapping a tile.
@@ -153,7 +136,16 @@ export default function ProfileScreen() {
         somewhere that would 404.
       */}
       <View style={s.topRow}>
-        {isIOS ? <Text style={s.topAction}>Settings</Text> : null}
+        {isIOS ? (
+          <Pressable
+            onPress={() => router.push("/settings")}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+          >
+            <Text style={s.topAction}>Settings</Text>
+          </Pressable>
+        ) : null}
         <Text style={[s.handle, !isIOS && s.handleGrow]}>@{user?.username ?? "…"}</Text>
         <Pressable
           onPress={() =>
@@ -175,7 +167,17 @@ export default function ProfileScreen() {
         >
           <Text style={[s.topAction, !user && s.topActionOff]}>Share</Text>
         </Pressable>
-        {isIOS ? null : <Text style={s.topAction}>⋮</Text>}
+        {/* Android's overflow is where the design puts it; Settings is what is behind it. */}
+        {isIOS ? null : (
+          <Pressable
+            onPress={() => router.push("/settings")}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+          >
+            <Text style={s.topAction}>⋮</Text>
+          </Pressable>
+        )}
       </View>
 
       {user ? (
@@ -239,53 +241,6 @@ export default function ProfileScreen() {
     </View>
   );
 
-  const footer = (
-    <View style={s.footer}>
-      <Card title="Account">
-        <Row label="ID" value={user?.id ?? "—"} />
-        <Text style={[type.note, s.footnote]}>
-          Signed in with a token held in the device keychain. The server takes your identity
-          from it rather than from anything this app sends, so a request cannot claim to be
-          someone else. No endpoint returns an email or a credential, including this one.
-        </Text>
-        <Button
-          label="Sign out"
-          onPress={signOut}
-          size="compact"
-          style={s.recheck}
-        />
-      </Card>
-
-      <Card
-        title="Backend health"
-        accessory={
-          <View style={[s.pill, { backgroundColor: up ? c.successBg : c.recBg }]}>
-            <Text style={[type.badge, { color: up ? c.success : c.recText }]}>
-              {up ? "UP" : (health?.status ?? "UNREACHABLE")}
-            </Text>
-          </View>
-        }
-      >
-        <Row label="ENDPOINT" value={`${API_BASE_URL}/actuator/health`} />
-        {dbStatus ? (
-          <Row label="DATABASE" value={dbStatus} tint={dbStatus === "UP" ? c.success : c.recText} />
-        ) : null}
-        {healthError ? <Text style={[type.note, { color: c.recText }]}>{healthError}</Text> : null}
-        <Button label="Check again" onPress={load} size="compact" style={s.recheck} />
-      </Card>
-
-      <Card title="Environment">
-        <Row label="APP ENV" value={APP_ENV} />
-        <Row label="API BASE" value={API_BASE_URL} />
-        <Row label="MEDIA BASE" value={MEDIA_BASE_URL} />
-        <Text style={[type.note, s.footnote]}>
-          Set per environment via .env / .env.development / .env.production, inlined at build
-          time.
-        </Text>
-      </Card>
-    </View>
-  );
-
   return (
     <SafeAreaView style={s.root} edges={["top"]}>
       <FlatList
@@ -297,7 +252,6 @@ export default function ProfileScreen() {
         columnWrapperStyle={s.column}
         contentContainerStyle={s.body}
         ListHeaderComponent={header}
-        ListFooterComponent={footer}
         renderItem={({ item }) => <VideoTile clip={item} onPress={open} />}
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={load} tintColor={c.w50} />
