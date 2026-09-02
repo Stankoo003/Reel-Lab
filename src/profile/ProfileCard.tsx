@@ -20,6 +20,10 @@ import Field from "../ui/Field";
 import StatGrid from "../ui/StatGrid";
 import type { FieldErrors, Profile } from "../../api/client";
 
+/** Shown in the empty bio field, and as a prompt on your own profile — one string, so the
+ *  form and the profile cannot start suggesting different things. */
+export const BIO_PLACEHOLDER = "Your wonderful bio";
+
 const MAX_BIO = 500;
 const MAX_DISPLAY_NAME = 100;
 
@@ -214,7 +218,17 @@ export default function ProfileCard({
                 an em dash rather than showing something the server never said.
               */}
               <Text style={s.subtitle}>—</Text>
-              {profile.bio ? <Text style={s.bio}>{profile.bio}</Text> : null}
+              {/*
+                An empty bio prompts you to write one — but only on YOUR profile, and dimmer
+                than real text so it never passes for something the user actually wrote.
+                Someone else's empty bio just shows nothing; a prompt there would be an
+                instruction you cannot follow.
+              */}
+              {profile.bio ? (
+                <Text style={s.bio}>{profile.bio}</Text>
+              ) : editable ? (
+                <Text style={[s.bio, s.bioEmpty]}>{BIO_PLACEHOLDER}</Text>
+              ) : null}
             </Animated.View>
           )}
         </Animated.View>
@@ -226,7 +240,7 @@ export default function ProfileCard({
             label="BIO"
             value={bio}
             onChangeText={setBio}
-            placeholder="Your wonderful bio"
+            placeholder={BIO_PLACEHOLDER}
             error={fieldErrors.bio}
             maxLength={MAX_BIO}
             multiline
@@ -317,6 +331,8 @@ const useStyles = themedStyles(({ c }) => ({
   avatarBadgeText: { fontFamily: font.mono, fontSize: 8.5, fontWeight: "600", color: "#FFFFFF" },
   subtitle: { fontFamily: font.mono, fontSize: 12, color: c.w42, marginTop: 4 },
   bio: { fontFamily: font.sans, fontSize: 12.5, lineHeight: 12.5 * 1.45, color: c.w60, marginTop: 7 },
+  // Dimmer than a written bio, so the difference is visible without reading it.
+  bioEmpty: { color: c.w38, fontStyle: "italic" },
   actions: { flexDirection: "row", gap: 10 },
   // Sized to sit level with the compact button beside it, and shaped by the same platform
   // rule the theme applies to every other control.
