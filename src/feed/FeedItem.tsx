@@ -566,15 +566,49 @@ const useStyles = themedStyles(({ c }) => ({
     width: isIOS ? 44 : 46,
     height: isIOS ? 44 : 46,
     borderRadius: 99,
-    backgroundColor: c.w10,
+    // Dark, not the design's 10% white.
+    //
+    // These sit on top of an arbitrary frame. A 10% WHITE disc carrying WHITE text is
+    // invisible the moment the clip cuts to something bright — a snow shot, a lit room, a
+    // white title card — and the whole rail disappears.
+    //
+    // 55%, not less: over a white frame the disc resolves to rgb(115), which puts white
+    // 9.5pt text at 4.74:1. At 38% it is rgb(158) and 2.68:1 — below the 4.5:1 that size
+    // needs, so the rail would still have been hard to read on exactly the frames this
+    // change exists for.
+    backgroundColor: "rgba(0,0,0,0.55)",
+    // A hairline of white keeps the disc's edge from dissolving into a dark frame, which is
+    // the failure the dark fill would otherwise have swapped the bright one for.
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
     alignItems: "center",
     justifyContent: "center",
   },
   // Filled accent once the control is on — the design's way of showing state without
   // needing a second icon.
   railCircleActive: { backgroundColor: c.accent },
-  railGlyph: { fontFamily: font.mono, fontSize: 9.5, fontWeight: "500", color: "#FFFFFF" },
-  railCaption: { fontFamily: font.mono, fontSize: 11, fontWeight: "500", color: c.w75 },
+  railGlyph: {
+    fontFamily: font.mono,
+    fontSize: 9.5,
+    fontWeight: "500",
+    color: "#FFFFFF",
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowRadius: 3,
+  },
+  // The caption has no disc behind it — it sits straight on the picture, so the shadow is
+  // the only thing between it and a white frame. Full white rather than 75%, for the same
+  // reason: 75% white on white is nothing.
+  railCaption: {
+    fontFamily: font.mono,
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#FFFFFF",
+    // Tight and near-opaque so it reads as an outline. A wide soft shadow spreads too thin
+    // to separate white text from a white frame.
+    textShadowColor: "rgba(0,0,0,0.9)",
+    textShadowRadius: 3,
+    textShadowOffset: { width: 0, height: 1 },
+  },
   railCaptionActive: { color: "#FFFFFF" },
   progressTrack: {
     width: "100%",
@@ -612,6 +646,21 @@ const useStyles = themedStyles(({ c }) => ({
     textShadowColor: "rgba(0,0,0,0.6)",
     textShadowRadius: 4,
   },
-  owner: { fontFamily: font.mono, fontSize: 11.5, color: "rgba(255,255,255,0.75)" },
-  hint: { fontFamily: font.mono, fontSize: 9.5, letterSpacing: 0.76, color: "rgba(255,255,255,0.45)" },
+  // Same exposure as the rail captions: these sit on the frame, not on a scrim strong
+  // enough to carry them on its own.
+  owner: {
+    fontFamily: font.mono,
+    fontSize: 11.5,
+    color: "rgba(255,255,255,0.92)",
+    textShadowColor: "rgba(0,0,0,0.55)",
+    textShadowRadius: 4,
+  },
+  hint: {
+    fontFamily: font.mono,
+    fontSize: 9.5,
+    letterSpacing: 0.76,
+    color: "rgba(255,255,255,0.7)",
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowRadius: 3,
+  },
 }));
