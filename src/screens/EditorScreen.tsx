@@ -830,8 +830,10 @@ const useStyles = themedStyles(({ c }) => ({
   headerTitle: { fontFamily: font.sans, fontSize: 14, fontWeight: "600", color: c.text },
   exportLink: { fontFamily: font.sans, fontSize: 15, fontWeight: "600", color: c.accent },
 
-  // Collapsed group; `tools` is a plain passthrough so the children keep their own spacing.
-  tools: {},
+  // The group must carry flex, not just pass through: `panel` below is `flex: 1` and expects
+  // to fill whatever height is left. Wrapping it in a view with no flex sized the wrapper to
+  // its content instead, which collapsed the panel to nothing and emptied every tab.
+  tools: { flex: 1 },
   toolsHidden: { display: "none" },
 
   preview: {
