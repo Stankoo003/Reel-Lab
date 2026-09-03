@@ -26,6 +26,14 @@ import {
   textFontPx,
 } from "../export";
 import type { Clip, EditSettings, TextElement, TextSizePreset } from "../types";
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from "expo-audio";
+import { beginRecordingMode, discardTake, endRecordingMode, keepTake } from "../voiceOver";
+import { errorMessage } from "../errors";
 import { MUSIC_CREDIT, MUSIC_TRACKS } from "../assets";
 import type { MusicTrack } from "../assets";
 import type { Dispatch, SetStateAction } from "react";
@@ -363,6 +371,18 @@ export default function EditorScreen({
   const stripWidth = useRef(0);
   const [previewBox, setPreviewBox] = useState({ w: 0, h: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  /*
+    Voice-over. The recorder is a single instance for the life of the screen — creating one
+    per take leaks native sessions, and expo-audio expects it to be a hook.
+
+    Recording deliberately does NOT play the clip back. Monitoring through the speaker while
+    the mic is open feeds the recording back into itself; watching the video muted and
+    speaking over it is what a phone can actually do.
+  */
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recState = useAudioRecorderState(recorder);
+  const [micError, setMicError] = useState<string | null>(null);
   // Preview takes the whole screen and the tools step aside. Tools are collapsed rather
   // than unmounted, so the filmstrip does not re-extract its frames on every toggle.
   const [expanded, setExpanded] = useState(false);
@@ -523,6 +543,50 @@ export default function EditorScreen({
     if (!stripWidth.current) return;
     const t = Math.max(0, Math.min(duration, (x / stripWidth.current) * duration));
     seek(t);
+  }
+
+  async function startVoice() {
+    setMicError(null);
+    try {
+      const perm = await requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        setMicError(
+          perm.canAskAgain
+            ? "Microphone access is needed to record a voice-over."
+            : "Microphone access is off for this app. Turn it on in Settings to record."
+        );
+        return;
+      }
+      // The clip keeps playing under a take would be recorded by the mic, so it stops.
+      player.pause();
+      await beginRecordingMode();
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+    } catch (e) {
+      await endRecordingMode();
+      setMicError(errorMessage(e));
+    }
+  }
+
+  async function stopVoice() {
+    try {
+      await recorder.stop();
+      const uri = recorder.uri;
+      if (uri) {
+        // The previous take is replaced, not stacked: one voice track, one file.
+        discardTake(settings.voiceUri);
+        set({ voiceUri: keepTake(uri) });
+      }
+    } catch (e) {
+      setMicError(errorMessage(e));
+    } finally {
+      await endRecordingMode();
+    }
+  }
+
+  function clearVoice() {
+    discardTake(settings.voiceUri);
+    set({ voiceUri: null });
   }
 
   const tabs: [Tab, string][] = [
@@ -904,6 +968,71 @@ export default function EditorScreen({
                 longer one is trimmed. All the way down on the original means silence, not a
                 quiet track. Above 0 dB a limiter catches the peaks, so a lift cannot clip.
               </Text>
+              {/* ---- voice-over ---- */}
+              <View style={[s.inlineRow, { marginTop: 20 }]}>
+                <Text style={type.control}>Voice-over</Text>
+                <Text style={s.dbText}>
+                  {recState.isRecording
+                    ? clock(recState.durationMillis / 1000)
+                    : settings.voiceUri
+                      ? "RECORDED"
+                      : "NONE"}
+                </Text>
+              </View>
+
+              <View style={s.voiceRow}>
+                <Pressable
+                  onPress={recState.isRecording ? stopVoice : startVoice}
+                  style={[s.micButton, recState.isRecording && s.micButtonOn]}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    recState.isRecording ? "Stop recording the voice-over" : "Record a voice-over"
+                  }
+                  accessibilityState={{ selected: recState.isRecording }}
+                >
+                  {/* A square while recording, a dot at rest — the same shape language the
+                      camera's shutter uses, so "armed" and "running" read the same way in
+                      both places. */}
+                  <View style={recState.isRecording ? s.micStop : s.micDot} />
+                </Pressable>
+
+                <View style={s.voiceCopy}>
+                  <Text style={type.body}>
+                    {recState.isRecording
+                      ? "Recording — speak now"
+                      : settings.voiceUri
+                        ? "Take saved on this device"
+                        : "Record a take over this clip"}
+                  </Text>
+                  <Text style={type.note}>
+                    The clip is paused while you record, so the mic does not pick up its own
+                    audio. Trimmed to the cut on export; it does not loop.
+                  </Text>
+                </View>
+
+                {settings.voiceUri && !recState.isRecording ? (
+                  <Pressable onPress={clearVoice} hitSlop={8}>
+                    <Text style={s.removeLabel}>REMOVE</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+
+              {settings.voiceUri ? (
+                <>
+                  <View style={[s.inlineRow, { marginTop: 12 }]}>
+                    <Text style={type.control}>Voice level</Text>
+                    <Text style={s.dbText}>{gainLabel(settings.voiceGainDb)}</Text>
+                  </View>
+                  <Bar
+                    value={gainToSlider(settings.voiceGainDb)}
+                    onChange={(v: number) => set({ voiceGainDb: sliderToGain(v) })}
+                    tint={c.success}
+                  />
+                </>
+              ) : null}
+
+              {micError ? <Text style={[type.error, s.note]}>{micError}</Text> : null}
+
               <Text style={[type.note, s.credit]}>{MUSIC_CREDIT}</Text>
             </View>
           ) : null}
@@ -958,6 +1087,20 @@ export default function EditorScreen({
 }
 
 const useStyles = themedStyles(({ c }) => ({
+  voiceRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 10 },
+  voiceCopy: { flex: 1, gap: 3 },
+  micButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 99,
+    borderWidth: 2,
+    borderColor: c.w22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  micButtonOn: { borderColor: c.rec },
+  micDot: { width: 20, height: 20, borderRadius: 99, backgroundColor: c.rec },
+  micStop: { width: 16, height: 16, borderRadius: 3, backgroundColor: c.rec },
   textItem: { borderRadius: 10, paddingVertical: 6, paddingHorizontal: 8, marginBottom: 6 },
   textItemOn: { backgroundColor: c.accentBgFaint },
   timingWrap: { marginTop: 8, paddingHorizontal: 2 },

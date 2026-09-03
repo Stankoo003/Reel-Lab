@@ -65,6 +65,8 @@ export const defaultSettings = (clip: Clip | null): EditSettings => ({
   musicTrackId: "pulse",
   musicGainDb: -6,
   originalGainDb: -18,
+  voiceUri: null,
+  voiceGainDb: 0,
 });
 
 export function ClipsProvider({ children }: { children: ReactNode }) {

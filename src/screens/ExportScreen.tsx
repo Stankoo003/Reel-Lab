@@ -59,6 +59,7 @@ export default function ExportScreen({
       label: `Audio mix · ${musicTrack(settings.musicTrackId).name}`,
       done: !!settings.music,
     },
+    { label: "Voice-over", done: !!settings.voiceUri },
     { label: "Write output file", done: false, state: "QUEUED" },
   ];
 

@@ -106,6 +106,8 @@ export type ComposeInput = Partial<EditSettings> & {
   trimOut: number;
   /** Absolute path to the music bed, or null for no mix. */
   musicPath?: string | null;
+  /** Absolute path to a recorded voice-over, or null. */
+  voicePath?: string | null;
 };
 
 export function buildComposeCommand({
@@ -120,6 +122,8 @@ export function buildComposeCommand({
   musicPath,
   musicGainDb = -6,
   originalGainDb = -18,
+  voicePath,
+  voiceGainDb = 0,
 }: ComposeInput): string {
   const duration = Math.max(0.1, trimOut - trimIn);
   const parts = [];
@@ -182,35 +186,59 @@ export function buildComposeCommand({
   // does not. A short fade on the tail keeps the loop/trim point from cutting dead.
   //
   // MUTE — originalGainDb at MUTE_DB drops [0:a] from the graph instead of attenuating it.
+  // VOICE-OVER is a third source, mixed like the others. It is NOT looped and gets no fade:
+  // a bed is background that should fill the clip, a voice take is a performance that ends
+  // when the speaker stops.
+  //
+  // Built as a LIST rather than as nested if/else. With three optional sources the branch
+  // count is eight, and the old two-source shape had already grown one bug from it — the
+  // no-bed path dropped the original's gain entirely.
   const muted = originalGainDb <= MUTE_DB;
-  const hasBoost = originalGainDb > 0 || (!!musicPath && musicGainDb > 0);
+  const hasBoost =
+    originalGainDb > 0 ||
+    (!!musicPath && musicGainDb > 0) ||
+    (!!voicePath && voiceGainDb > 0);
   const fade = Math.min(MUSIC_FADE_OUT, duration / 4);
 
+  // Input indexes follow the order the -i flags were pushed above.
+  const voiceIndex = musicPath ? 2 : 1;
+  const sources: string[] = [];
+
+  if (!muted) {
+    filters.push(`[0:a]volume=${originalGainDb}dB[o]`);
+    sources.push("[o]");
+  }
   if (musicPath) {
     // -ss/-to before -i apply to input 0 only, so the music gets its own atrim.
     filters.push(
       `[1:a]atrim=0:${duration.toFixed(2)},asetpts=PTS-STARTPTS,volume=${musicGainDb}dB,` +
         `afade=t=out:st=${Math.max(0, duration - fade).toFixed(2)}:d=${fade.toFixed(2)}[m]`
     );
-    if (muted) {
-      // Original dropped entirely: the bed IS the soundtrack.
-      filters.push(`[m]anull[a]`);
-    } else {
-      filters.push(`[0:a]volume=${originalGainDb}dB[o]`);
-      // normalize=0 — amix otherwise halves every input. duration=longest, because both
-      // branches are already bounded by the trim, and `first` would let a short original
-      // audio stream cut the bed off early.
-      filters.push(`[o][m]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[a]`);
-    }
-  } else if (!muted) {
-    // volume, not anull. With no bed this branch used to pass the original through
-    // untouched, so the level slider did nothing at all unless music happened to be on.
-    filters.push(`[0:a]volume=${originalGainDb}dB[a]`);
+    sources.push("[m]");
+  }
+  if (voicePath) {
+    filters.push(
+      `[${voiceIndex}:a]atrim=0:${duration.toFixed(2)},asetpts=PTS-STARTPTS,` +
+        `volume=${voiceGainDb}dB[vo]`
+    );
+    sources.push("[vo]");
+  }
+
+  if (sources.length === 1) {
+    filters.push(`${sources[0]}anull[a]`);
+  } else if (sources.length > 1) {
+    // normalize=0 — amix otherwise divides every input by their count. duration=longest,
+    // because each branch is already bounded by the trim, and `first` would let a short
+    // source cut the others off early.
+    filters.push(
+      `${sources.join("")}amix=inputs=${sources.length}:duration=longest:` +
+        `dropout_transition=0:normalize=0[a]`
+    );
   }
 
   // No bed and the original muted -> there is nothing to encode; -an keeps a silent
   // (rather than broken) file instead of mapping a label the graph never produced.
-  const hasAudio = !!musicPath || !muted;
+  const hasAudio = sources.length > 0;
 
   // Boosting can push the sum past full scale, which clips as crackle rather than as
   // loudness. The limiter only enters the graph when something is actually being lifted —
@@ -266,6 +294,8 @@ export async function runExport(
     textPaths,
     // Already null when the toggle is off — see where musicPath is resolved above.
     musicPath,
+    // A file:// URI from the recorder; FFmpeg wants a filesystem path.
+    voicePath: settings.voiceUri ? toPath(settings.voiceUri) : null,
   });
 
   const durationMs = Math.max(100, (settings.trimOut - settings.trimIn) * 1000);

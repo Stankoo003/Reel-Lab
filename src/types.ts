@@ -110,6 +110,14 @@ export type EditSettings = {
    * the graph entirely, so "mute" is silence, not a very quiet track.
    */
   originalGainDb: number;
+  /**
+   * A recorded voice-over, as a file:// URI in app-private storage, or null.
+   *
+   * Not looped and not faded on export — a bed fills the clip, a take ends when the speaker
+   * does. Trimmed to the cut like everything else.
+   */
+  voiceUri: string | null;
+  voiceGainDb: number;
 };
 
 /** A finished export: one encode, one output file. */
