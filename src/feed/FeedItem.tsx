@@ -4,10 +4,53 @@ import { View, Text, Pressable, StyleSheet, ActivityIndicator } from "react-nati
 import { VideoView } from "expo-video";
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-screens/experimental";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { font, isIOS, themedStyles } from "../theme";
 import { compactCount } from "../format";
 import type { VideoPlayer, VideoPlayerStatus } from "expo-video";
 import type { Clip } from "../types";
+
+/**
+ * The heart that flashes on a double tap.
+ *
+ * The gesture already worked, but the only sign of it was the rail button changing colour
+ * in the corner — nowhere near where the finger was. A confirmation that appears somewhere
+ * other than where you acted reads as a coincidence, not as a response.
+ *
+ * Deliberately not tied to `liked`: it fires on the ACTION, so double-tapping to unlike
+ * shows nothing rather than a heart that means the opposite of what just happened.
+ */
+function useLikeBurst() {
+  const scale = useSharedValue(0);
+  const opacity = useSharedValue(0);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ scale: scale.value }],
+  }));
+
+  const burst = useCallback(() => {
+    // Overshoot then settle, and fade out on the way down — an ease-in from nothing reads
+    // as sluggish at this size, where the whole thing lasts under half a second.
+    scale.value = withSequence(
+      withTiming(1.15, { duration: 140 }),
+      withTiming(0.92, { duration: 110 }),
+      withTiming(1.4, { duration: 220 })
+    );
+    opacity.value = withSequence(
+      withTiming(1, { duration: 110 }),
+      withTiming(1, { duration: 140 }),
+      withTiming(0, { duration: 220 })
+    );
+  }, [opacity, scale]);
+
+  return { style, burst };
+}
 
 export default function FeedItem({
   clip,
@@ -57,6 +100,7 @@ export default function FeedItem({
 }) {
   const s = useStyles();
   const [firstFrame, setFirstFrame] = useState(false);
+  const { style: burstStyle, burst } = useLikeBurst();
 
   // Without this a clip whose source fails to load is a black rectangle forever —
   // indistinguishable from one that is merely slow.
@@ -169,14 +213,19 @@ export default function FeedItem({
     // held single tap and run the double-tap action in its place. Playback is untouched,
     // so a double tap likes without also pausing.
     if (clearPendingTap()) {
-      onToggleLike?.();
+      // Only when there is something to like — a local clip has no server row, so a heart
+      // there would promise an action that never happened.
+      if (onToggleLike) {
+        onToggleLike();
+        burst();
+      }
       return;
     }
     pendingTap.current = setTimeout(() => {
       pendingTap.current = null;
       onTogglePlay();
     }, DOUBLE_TAP_WINDOW_MS);
-  }, [clearPendingTap, onTogglePlay, onToggleLike]);
+  }, [clearPendingTap, onTogglePlay, onToggleLike, burst]);
 
   return (
     <View style={[s.root, { height }]}>
@@ -258,6 +307,12 @@ export default function FeedItem({
         the fade runs off the screen instead of stopping at the inset. Inside the SafeAreaView
         it ended on a visible line under the tab bar, with the picture brighter below it.
       */}
+      {/* Centred rather than at the finger: a tap anywhere on the row likes, so there is no
+          single point the gesture "happened at", and the middle is where the eye already is. */}
+      <Animated.View pointerEvents="none" style={[s.likeBurst, burstStyle]}>
+        <Text style={s.likeBurstGlyph}>{"\u2665\uFE0E"}</Text>
+      </Animated.View>
+
       <View pointerEvents="none" style={s.scrim} />
 
       {/* box-none, not none: the caption stays untouchable but the mute button inside
@@ -460,6 +515,25 @@ const useStyles = themedStyles(({ c }) => ({
   buffering: { position: "absolute", alignSelf: "center", top: "50%", marginTop: -12 },
   // Bottom-anchored beside the caption, as in design 2a — the caption reserves room for it
   // with its own right padding rather than the two overlapping.
+  likeBurst: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "50%",
+    marginTop: -55,
+    alignItems: "center",
+  },
+  // The variation selector on the glyph forces TEXT presentation. Without it iOS draws
+  // U+2665 as a red emoji, which ignores `color` and clashes with the rest of the chrome.
+  likeBurstGlyph: {
+    fontSize: 110,
+    lineHeight: 120,
+    color: "#FFFFFF",
+    // A white heart on a bright frame vanishes; the shadow is what keeps it readable over
+    // whatever the clip happens to be showing.
+    textShadowColor: "rgba(0,0,0,0.45)",
+    textShadowRadius: 18,
+  },
   rail: { position: "absolute", right: 14, bottom: 18, alignItems: "center", gap: 18 },
   railItem: { alignItems: "center", gap: 4 },
   railCircle: {
