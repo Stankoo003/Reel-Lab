@@ -34,6 +34,7 @@ import {
 } from "expo-audio";
 import { beginRecordingMode, discardTake, endRecordingMode, keepTake } from "../voiceOver";
 import { errorMessage } from "../errors";
+import InfoNote from "../ui/InfoNote";
 import { MUSIC_CREDIT, MUSIC_TRACKS } from "../assets";
 import type { MusicTrack } from "../assets";
 import type { Dispatch, SetStateAction } from "react";
@@ -899,13 +900,19 @@ export default function EditorScreen({
                 </>
               ) : null}
 
+              {/* Short, and it changes with the state — this one tells you what to do next
+                  rather than explaining the feature, so it stays on screen. */}
               <Text style={[type.note, s.note]}>
                 {texts.length
                   ? selected
-                    ? "Drag the dashed box on the preview to place it. Burned in at export — not a live layer on the saved file."
-                    : "Tap an element to edit its size and colour, or drag it on the preview."
-                  : "No text yet. Add one, then drag it on the preview to place it."}
+                    ? "Drag the box on the preview to place it."
+                    : "Tap an element to edit it."
+                  : "No text yet."}
               </Text>
+
+              <InfoNote label="HOW TEXT IS SAVED">
+                {"Burned into the exported file, not kept as a layer you can edit later. Position, size and timing are all set here, and the preview shows exactly what the export will draw."}
+              </InfoNote>
             </View>
           ) : null}
 
@@ -976,11 +983,9 @@ export default function EditorScreen({
                 tint={c.w55}
               />
 
-              <Text style={[type.note, s.note]}>
-                Mixed in the same pass as trim + text. A bed shorter than the cut loops; a
-                longer one is trimmed. All the way down on the original means silence, not a
-                quiet track. Above 0 dB a limiter catches the peaks, so a lift cannot clip.
-              </Text>
+              <InfoNote label="HOW THE MIX WORKS">
+                {"Mixed in the same pass as trim and text. A bed shorter than the cut loops; a longer one is trimmed. All the way down on the original means silence, not a quiet track. Above 0 dB a limiter catches the peaks, so a lift cannot clip."}
+              </InfoNote>
               {/* ---- voice-over ---- */}
               <View style={[s.inlineRow, { marginTop: 20 }]}>
                 <Text style={type.control}>Voice-over</Text>
@@ -1017,10 +1022,6 @@ export default function EditorScreen({
                         ? "Take saved on this device"
                         : "Record a take over this clip"}
                   </Text>
-                  <Text style={type.note}>
-                    The clip is paused while you record, so the mic does not pick up its own
-                    audio. Trimmed to the cut on export; it does not loop.
-                  </Text>
                 </View>
 
                 {settings.voiceUri && !recState.isRecording ? (
@@ -1029,6 +1030,10 @@ export default function EditorScreen({
                   </Pressable>
                 ) : null}
               </View>
+
+              <InfoNote label="ABOUT VOICE-OVER">
+                {"The clip is paused while you record, so the mic does not pick up its own audio. The take is saved on this device, trimmed to the cut on export, and never looped."}
+              </InfoNote>
 
               {settings.voiceUri ? (
                 <>
@@ -1087,9 +1092,9 @@ export default function EditorScreen({
                 />
               </View>
 
-              <Text style={[type.note, s.note]}>
-                Carried to the post screen when you export. Nothing is uploaded from here.
-              </Text>
+              <InfoNote label="WHERE THIS GOES">
+                {"Carried to the post screen when you export. Nothing is uploaded from here, and the source file keeps its own name."}
+              </InfoNote>
             </View>
           ) : null}
         </ScrollView>
