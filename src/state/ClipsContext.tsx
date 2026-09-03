@@ -55,6 +55,9 @@ const ClipsContext = createContext<ClipsValue | null>(null);
 const ExportProgressContext = createContext<ExportProgress>({ progress: 0, elapsed: 0 });
 
 export const defaultSettings = (clip: Clip | null): EditSettings => ({
+  // Seeded from the file's own name, which is the only thing known about it at this point.
+  title: clip?.name ?? "",
+  description: "",
   trimIn: 0,
   trimOut: clip?.duration || 5,
   texts: [],

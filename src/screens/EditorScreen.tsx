@@ -209,7 +209,7 @@ function Bar({
  */
 const RESIZE = LinearTransition.duration(240);
 
-type Tab = "trim" | "text" | "audio";
+type Tab = "trim" | "text" | "audio" | "info";
 
 export default function EditorScreen({
   clip,
@@ -398,6 +398,7 @@ export default function EditorScreen({
     ["trim", "TRIM"],
     ["text", "TEXT"],
     ["audio", "AUDIO"],
+    ["info", "INFO"],
   ];
 
   return (
@@ -406,7 +407,11 @@ export default function EditorScreen({
         <Pressable onPress={onCancel} hitSlop={10}>
           <Text style={type.action}>Cancel</Text>
         </Pressable>
-        <Text style={s.headerTitle}>{clip.name}</Text>
+        {/* Follows the INFO tab, so typing a title shows up where the title belongs rather
+            than only on the screen two steps later. Falls back to the filename. */}
+        <Text style={s.headerTitle} numberOfLines={1}>
+          {settings.title.trim() || clip.name}
+        </Text>
         <Pressable onPress={onExport} hitSlop={10}>
           <Text style={s.exportLink}>Export</Text>
         </Pressable>
@@ -747,6 +752,49 @@ export default function EditorScreen({
               <Text style={[type.note, s.credit]}>{MUSIC_CREDIT}</Text>
             </View>
           ) : null}
+
+          {/*
+            Title and description. Edited here rather than only on the publish screen so the
+            clip has a name while you are still working on it — and so Post starts filled in
+            instead of asking again for something already decided.
+
+            Nothing is sent from this tab. These live in the staged edit and travel to Post;
+            the source file keeps its own filename either way.
+          */}
+          {tab === "info" ? (
+            <View style={s.infoPanel}>
+              <View style={s.infoField}>
+                <Text style={type.label}>TITLE</Text>
+                <TextInput
+                  value={settings.title}
+                  onChangeText={(v) => set({ title: v })}
+                  placeholder="Give it a name"
+                  placeholderTextColor={c.w38}
+                  maxLength={200}
+                  style={s.infoInput}
+                  accessibilityLabel="Clip title"
+                />
+              </View>
+
+              <View style={s.infoField}>
+                <Text style={type.label}>DESCRIPTION</Text>
+                <TextInput
+                  value={settings.description}
+                  onChangeText={(v) => set({ description: v })}
+                  placeholder="Optional"
+                  placeholderTextColor={c.w38}
+                  multiline
+                  maxLength={2000}
+                  style={[s.infoInput, s.infoMultiline]}
+                  accessibilityLabel="Clip description"
+                />
+              </View>
+
+              <Text style={[type.note, s.note]}>
+                Carried to the post screen when you export. Nothing is uploaded from here.
+              </Text>
+            </View>
+          ) : null}
         </ScrollView>
       </View>
       </View>
@@ -755,6 +803,21 @@ export default function EditorScreen({
 }
 
 const useStyles = themedStyles(({ c }) => ({
+  infoPanel: { gap: 14 },
+  infoField: { gap: 6 },
+  infoInput: {
+    fontFamily: font.sans,
+    fontSize: 13,
+    color: c.text,
+    minHeight: 42,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: c.inset,
+    borderWidth: 1,
+    borderColor: c.w14,
+  },
+  infoMultiline: { minHeight: 88, textAlignVertical: "top" },
   root: { flex: 1, backgroundColor: c.bg },
   header: {
     flexDirection: "row",

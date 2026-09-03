@@ -24,12 +24,14 @@ import { probe } from "../src/ffmpeg";
 
 export default function PostRoute() {
   const router = useRouter();
-  const { result, clip } = useClips();
+  const { result, clip, settings } = useClips();
   const { c, type } = useTheme();
   const s = useStyles();
 
-  const [title, setTitle] = useState(clip?.name ?? "");
-  const [description, setDescription] = useState("");
+  // Seeded from the editor's INFO tab, not from the filename — retyping a title you already
+  // wrote one screen ago is the kind of thing that makes a flow feel longer than it is.
+  const [title, setTitle] = useState(settings?.title || clip?.name || "");
+  const [description, setDescription] = useState(settings?.description ?? "");
   const [published, setPublished] = useState(true);
   const [poster, setPoster] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);

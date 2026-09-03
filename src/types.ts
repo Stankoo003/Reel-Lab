@@ -70,6 +70,15 @@ export type TextElement = {
 
 /** The staged edit. Handed to runExport as-is, plus a sourceUri. */
 export type EditSettings = {
+  /**
+   * What the clip will be called, and what it says.
+   *
+   * Part of the staged edit rather than of the Clip: the source file is not renamed by
+   * typing here, and nothing is sent anywhere until Post. The publish screen starts from
+   * these, so a title written in the editor is not asked for a second time.
+   */
+  title: string;
+  description: string;
   trimIn: number;
   trimOut: number;
   /** Every caption to burn in. Empty means no drawtext at all in the filter graph. */
