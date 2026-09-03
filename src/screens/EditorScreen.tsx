@@ -11,7 +11,7 @@ import { useFilmstrip } from "../hooks/useFilmstrip";
 import { useTrimmedPlayback } from "../hooks/useTrimmedPlayback";
 import { clampIn, clampOut } from "../trim";
 import { timecode } from "../clips";
-import { MUTE_DB } from "../export";
+import { GAIN_MAX_DB, MUTE_DB } from "../export";
 import {
   clamp01,
   DEFAULT_FRAME_HEIGHT,
@@ -67,9 +67,116 @@ function fitRect(aspect: number, box: { w: number; h: number }): Rect {
   return { x: (box.w - w) / 2, y: (box.h - h) / 2, w, h };
 }
 
+/**
+ * When one caption is on screen, dragged against the cut.
+ *
+ * The bar IS the trimmed clip: its full width is trimIn…trimOut, so a handle's position is
+ * read directly as a time rather than through a scale the user has to hold in their head.
+ * Times are committed on release, like the trim handles — a settings write per frame would
+ * re-render the filmstrip while a finger is down.
+ */
+function TextTiming({
+  el,
+  trimIn,
+  trimOut,
+  position,
+  onCommit,
+  s,
+}: {
+  el: TextElement;
+  trimIn: number;
+  trimOut: number;
+  /** Playhead, in source seconds — drawn on the bar so timing can be set against the frame. */
+  position: number;
+  onCommit: (start: number, end: number) => void;
+  s: ReturnType<typeof useStyles>;
+}) {
+  const width = useRef(0);
+  const [drag, setDrag] = useState<{ start: number; end: number } | null>(null);
+
+  const span = Math.max(0.1, trimOut - trimIn);
+  const start = drag ? drag.start : el.start;
+  const end = drag ? drag.end : el.end;
+
+  const live = useRef({ el, trimIn, trimOut, span, onCommit });
+  live.current = { el, trimIn, trimOut, span, onCommit };
+
+  const makePan = (edge: "start" | "end") =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        const l = live.current;
+        setDrag({ start: l.el.start, end: l.el.end });
+      },
+      onPanResponderMove: (_e, g) => {
+        const l = live.current;
+        if (!width.current) return;
+        const delta = (g.dx / width.current) * l.span;
+        // MIN_CAPTION keeps the two handles from crossing, which would invert the window
+        // and make `between(t, a, b)` match nothing at all.
+        if (edge === "start") {
+          const next = Math.min(
+            Math.max(l.trimIn, l.el.start + delta),
+            l.el.end - MIN_CAPTION
+          );
+          setDrag({ start: next, end: l.el.end });
+        } else {
+          const next = Math.max(
+            Math.min(l.trimOut, l.el.end + delta),
+            l.el.start + MIN_CAPTION
+          );
+          setDrag({ start: l.el.start, end: next });
+        }
+      },
+      onPanResponderRelease: () => {
+        setDrag((d) => {
+          if (d) live.current.onCommit(d.start, d.end);
+          return null;
+        });
+      },
+      onPanResponderTerminate: () => setDrag(null),
+    });
+
+  const pans = useMemo(() => ({ start: makePan("start"), end: makePan("end") }), []);
+
+  const pct = (t: number) => Math.max(0, Math.min(100, ((t - trimIn) / span) * 100));
+  const leftPct = pct(start);
+  const rightPct = 100 - pct(end);
+  const headPct = pct(position);
+
+  return (
+    <View style={s.timingWrap}>
+      <View
+        style={s.timingTrack}
+        onLayout={(e) => (width.current = e.nativeEvent.layout.width)}
+      >
+        <View style={[s.timingFill, { left: `${leftPct}%`, right: `${rightPct}%` }]} />
+        <View pointerEvents="none" style={[s.timingHead, { left: `${headPct}%` }]} />
+        <View {...pans.start.panHandlers} style={[s.timingHandle, { left: `${leftPct}%` }]}>
+          <View style={s.timingGrip} />
+        </View>
+        <View {...pans.end.panHandlers} style={[s.timingHandle, { right: `${rightPct}%` }]}>
+          <View style={s.timingGrip} />
+        </View>
+      </View>
+      <View style={s.timingMeta}>
+        <Text style={s.timingText}>{timecode(start)}</Text>
+        <Text style={s.timingText}>{(end - start).toFixed(1)}s on screen</Text>
+        <Text style={s.timingText}>{timecode(end)}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Shortest caption the handles will allow, in seconds. */
+const MIN_CAPTION = 0.2;
+
 let textSeq = 0;
 
-function newTextElement(): TextElement {
+/** A new caption spans the whole cut — visible from the moment it is added, so it can be
+ *  positioned before its timing is narrowed. */
+function newTextElement(trimIn: number, trimOut: number): TextElement {
   textSeq += 1;
   return {
     id: `t${Date.now().toString(36)}-${textSeq}`,
@@ -78,6 +185,8 @@ function newTextElement(): TextElement {
     y: NEW_TEXT_Y,
     size: TEXT_SIZE_PRESETS.M,
     color: TEXT_COLORS[0],
+    start: trimIn,
+    end: trimOut,
   };
 }
 
@@ -96,6 +205,7 @@ function CaptionGhost({
   rect,
   draggable,
   selected,
+  outOfWindow,
   onSelect,
   onCommit,
 }: {
@@ -103,6 +213,8 @@ function CaptionGhost({
   rect: Rect;
   draggable: boolean;
   selected: boolean;
+  /** The playhead is outside this caption's window. */
+  outOfWindow: boolean;
   onSelect: () => void;
   onCommit: (x: number, y: number) => void;
 }) {
@@ -150,6 +262,10 @@ function CaptionGhost({
   const fontSize = textFontPx(el, rect.h || DEFAULT_FRAME_HEIGHT);
   const pad = textBoxPad(fontSize);
 
+  // Outside its window and not the one being edited: it is simply not on screen, which is
+  // what the export will do too.
+  if (outOfWindow && !(draggable && selected)) return null;
+
   return (
     <View
       {...pan.panHandlers}
@@ -163,6 +279,9 @@ function CaptionGhost({
           paddingVertical: Math.round(pad * 0.5),
         },
         draggable && (selected ? s.captionSelected : s.captionIdle),
+        // Kept visible only so it stays editable; dimmed so it never reads as "this is on
+        // screen at this moment".
+        outOfWindow && s.captionOutside,
       ]}
     >
       <Text
@@ -208,6 +327,18 @@ function Bar({
  * one: without it the panel vanishes and the video jumps, and the eye has to re-find both.
  */
 const RESIZE = LinearTransition.duration(240);
+
+/*
+ * The level sliders run MUTE_DB … GAIN_MAX_DB, so 0 dB — the untouched original — sits part
+ * way along rather than at the top. Both sliders share the mapping: one that could be lifted
+ * and one that could not would be an arbitrary difference between two identical controls.
+ */
+const GAIN_SPAN = GAIN_MAX_DB - MUTE_DB;
+const gainToSlider = (db: number) => (db - MUTE_DB) / GAIN_SPAN;
+const sliderToGain = (v: number) => Math.round(v * GAIN_SPAN + MUTE_DB);
+
+/** "+6 dB" reads as a boost; "6 dB" reads as a level. The sign is the information. */
+const gainLabel = (db: number) => (db > 0 ? `+${db} dB` : `${db} dB`);
 
 type Tab = "trim" | "text" | "audio" | "info";
 
@@ -372,7 +503,7 @@ export default function EditorScreen({
     set({ texts: texts.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
 
   const addText = () => {
-    const el = newTextElement();
+    const el = newTextElement(trimIn, trimOut);
     // Stagger new elements so a second one does not land exactly on the first.
     const nth = texts.length;
     el.y = clamp01(NEW_TEXT_Y - nth * 0.12);
@@ -448,6 +579,15 @@ export default function EditorScreen({
             rect={videoRect}
             draggable={tab === "text"}
             selected={el.id === selectedId}
+            /*
+              The preview honours the timing as well as the position — a caption you have
+              scrubbed past is gone here exactly as it will be gone in the export.
+
+              The exception is the one you are editing: it stays on screen, dimmed, so it can
+              still be dragged and resized while the playhead sits outside its window. Hiding
+              it would make the element you selected the one you cannot touch.
+            */
+            outOfWindow={position < el.start || position > el.end}
             onSelect={() => setSelectedId(el.id)}
             onCommit={(x, y) => patchText(el.id, { x, y })}
           />
@@ -592,7 +732,8 @@ export default function EditorScreen({
               {texts.map((el, i) => {
                 const on = el.id === selectedId;
                 return (
-                  <View key={el.id} style={[s.textRow, on && s.textRowOn]}>
+                  <View key={el.id} style={[s.textItem, on && s.textItemOn]}>
+                    <View style={s.textRow}>
                     <Pressable onPress={() => setSelectedId(el.id)} hitSlop={8}>
                       <Text style={[s.textIndex, on && s.textIndexOn]}>{i + 1}</Text>
                     </Pressable>
@@ -607,6 +748,18 @@ export default function EditorScreen({
                     <Pressable onPress={() => removeText(el.id)} hitSlop={8}>
                       <Text style={s.removeLabel}>REMOVE</Text>
                     </Pressable>
+                    </View>
+
+                    {/* Timing sits under the row it belongs to, not in a separate panel:
+                        two captions differ by WHEN as much as by what they say. */}
+                    <TextTiming
+                      el={el}
+                      trimIn={trimIn}
+                      trimOut={trimOut}
+                      position={position}
+                      onCommit={(start, end) => patchText(el.id, { start, end })}
+                      s={s}
+                    />
                   </View>
                 );
               })}
@@ -724,30 +877,32 @@ export default function EditorScreen({
 
               <View style={s.inlineRow}>
                 <Text style={type.control}>Track level</Text>
-                <Text style={s.dbText}>{settings.musicGainDb} dB</Text>
+                <Text style={s.dbText}>{gainLabel(settings.musicGainDb)}</Text>
               </View>
               <Bar
-                value={(settings.musicGainDb + 40) / 40}
-                onChange={(v: number) => set({ musicGainDb: Math.round(v * 40 - 40) })}
+                value={gainToSlider(settings.musicGainDb)}
+                onChange={(v: number) => set({ musicGainDb: sliderToGain(v) })}
                 tint={c.accent}
               />
 
               <View style={[s.inlineRow, { marginTop: 16 }]}>
                 <Text style={type.control}>Original video audio</Text>
                 <Text style={s.dbText}>
-                  {settings.originalGainDb <= MUTE_DB ? "MUTED" : `${settings.originalGainDb} dB`}
+                  {settings.originalGainDb <= MUTE_DB
+                    ? "MUTED"
+                    : gainLabel(settings.originalGainDb)}
                 </Text>
               </View>
               <Bar
-                value={(settings.originalGainDb + 40) / 40}
-                onChange={(v: number) => set({ originalGainDb: Math.round(v * 40 - 40) })}
+                value={gainToSlider(settings.originalGainDb)}
+                onChange={(v: number) => set({ originalGainDb: sliderToGain(v) })}
                 tint={c.w55}
               />
 
               <Text style={[type.note, s.note]}>
                 Mixed in the same pass as trim + text. A bed shorter than the cut loops; a
                 longer one is trimmed. All the way down on the original means silence, not a
-                quiet track.
+                quiet track. Above 0 dB a limiter catches the peaks, so a lift cannot clip.
               </Text>
               <Text style={[type.note, s.credit]}>{MUSIC_CREDIT}</Text>
             </View>
@@ -803,6 +958,30 @@ export default function EditorScreen({
 }
 
 const useStyles = themedStyles(({ c }) => ({
+  textItem: { borderRadius: 10, paddingVertical: 6, paddingHorizontal: 8, marginBottom: 6 },
+  textItemOn: { backgroundColor: c.accentBgFaint },
+  timingWrap: { marginTop: 8, paddingHorizontal: 2 },
+  timingTrack: {
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: c.w08,
+    justifyContent: "center",
+  },
+  timingFill: { position: "absolute", top: 0, bottom: 0, borderRadius: 6, backgroundColor: c.accentBgStrong },
+  timingHead: { position: "absolute", top: -2, bottom: -2, width: 1.5, backgroundColor: c.w60 },
+  // 28pt of touch on a 12pt bar — the same ratio the trim handles use.
+  timingHandle: {
+    position: "absolute",
+    top: -8,
+    bottom: -8,
+    width: 28,
+    marginLeft: -14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timingGrip: { width: 3, height: 18, borderRadius: 2, backgroundColor: c.accent },
+  timingMeta: { flexDirection: "row", justifyContent: "space-between", marginTop: 5 },
+  timingText: { fontFamily: font.mono, fontSize: 9.5, color: c.w42 },
   infoPanel: { gap: 14 },
   infoField: { gap: 6 },
   infoInput: {
@@ -874,6 +1053,7 @@ const useStyles = themedStyles(({ c }) => ({
     borderWidth: 1.5,
     borderColor: "transparent",
   },
+  captionOutside: { opacity: 0.35 },
   captionSelected: { borderStyle: "dashed", borderColor: c.accent },
   captionIdle: { borderStyle: "dashed", borderColor: c.w22 },
   captionText: { fontFamily: font.sans, fontWeight: "600", textShadowColor: "rgba(0,0,0,0.7)", textShadowRadius: 3 },

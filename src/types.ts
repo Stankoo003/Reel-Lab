@@ -66,6 +66,16 @@ export type TextElement = {
   size: number;
   /** "#RRGGBB" — one of TEXT_COLORS, or anything drawtext accepts. */
   color: string;
+  /**
+   * When the caption is on screen, in SOURCE-clip seconds — the same clock as trimIn and
+   * trimOut, so a caption keeps its place against the footage when the cut moves.
+   *
+   * The export converts to output time (t = 0 is trimIn) because FFmpeg's `enable` runs on
+   * the trimmed stream. Storing output-relative times instead would silently slide every
+   * caption whenever the in-point changed.
+   */
+  start: number;
+  end: number;
 };
 
 /** The staged edit. Handed to runExport as-is, plus a sourceUri. */

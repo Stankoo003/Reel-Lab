@@ -55,6 +55,11 @@ export function textBoxPad(fontPx: number): number {
   return Math.max(2, Math.round(fontPx * 0.25));
 }
 
+/** Is this caption visible anywhere inside the cut? Outside it, drawtext would be dead weight. */
+export function textInCut(el: TextElement, trimIn: number, trimOut: number): boolean {
+  return el.end > trimIn && el.start < trimOut;
+}
+
 /** Elements that actually produce a drawtext. Empty input ⇒ no drawtext in the graph. */
 export function drawableTexts(texts: TextElement[] | undefined | null): TextElement[] {
   return (texts ?? []).filter((t) => !!t.text?.trim());
@@ -65,6 +70,17 @@ export function drawableTexts(texts: TextElement[] | undefined | null): TextElem
  * its branch is dropped from the graph, because -40 dB is still audible on headphones and
  * users who ask for mute mean silence.
  */
+/**
+ * Level range for both the bed and the original, in dB.
+ *
+ * The top used to be 0 — you could only ever make a source quieter. A clip recorded far
+ * from its subject is the ordinary case for a phone camera, and there was no way to lift it.
+ *
+ * +12 rather than more: past that, boosting a quiet recording mostly raises its noise floor,
+ * and the limiter below is preventing distortion rather than making it sound good.
+ */
+export const GAIN_MAX_DB = 12;
+
 export const MUTE_DB = -40;
 
 /** Fade applied to the tail of the music bed so a trimmed or looped bed does not cut dead. */
@@ -131,11 +147,25 @@ export function buildComposeCommand({
       // build, and frameHeight is already known here.
       const x = `w*${clamp01(el.x).toFixed(4)}-text_w/2`;
       const y = `h*${clamp01(el.y).toFixed(4)}-text_h/2`;
+      /*
+        WHEN it shows. `enable` runs on the TRIMMED stream, where t = 0 is trimIn, but the
+        element stores source-clip seconds — so both ends shift by trimIn here. Clamped to
+        the cut, because a caption timed outside it would silently never appear.
+
+        A caption covering the whole cut gets no `enable` at all: the filter is cheaper
+        without one, and it keeps the common case out of the command entirely.
+      */
+      const from0 = Math.max(0, el.start - trimIn);
+      const to0 = Math.min(duration, el.end - trimIn);
+      const always = from0 <= 0 && to0 >= duration;
+      const enable = always
+        ? ""
+        : `enable='between(t,${from0.toFixed(2)},${to0.toFixed(2)})':`;
       // textfile= keeps ':' and quotes out of the graph; expansion=none stops drawtext
       // expanding '%' and '{}' — without it "50%" renders nothing and still exits 0.
       filters.push(
         `[${from}]drawtext=fontfile='${fontPath}':textfile='${textPaths[i]}':reload=0:expansion=none:` +
-          `x=${x}:y=${y}:fontsize=${fontPx}:fontcolor=${hex}:` +
+          `${enable}x=${x}:y=${y}:fontsize=${fontPx}:fontcolor=${hex}:` +
           `box=1:boxcolor=black@0.5:boxborderw=${textBoxPad(fontPx)}[${to}]`
       );
     });
@@ -153,6 +183,7 @@ export function buildComposeCommand({
   //
   // MUTE — originalGainDb at MUTE_DB drops [0:a] from the graph instead of attenuating it.
   const muted = originalGainDb <= MUTE_DB;
+  const hasBoost = originalGainDb > 0 || (!!musicPath && musicGainDb > 0);
   const fade = Math.min(MUSIC_FADE_OUT, duration / 4);
 
   if (musicPath) {
@@ -172,15 +203,26 @@ export function buildComposeCommand({
       filters.push(`[o][m]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[a]`);
     }
   } else if (!muted) {
-    filters.push(`[0:a]anull[a]`);
+    // volume, not anull. With no bed this branch used to pass the original through
+    // untouched, so the level slider did nothing at all unless music happened to be on.
+    filters.push(`[0:a]volume=${originalGainDb}dB[a]`);
   }
 
   // No bed and the original muted -> there is nothing to encode; -an keeps a silent
   // (rather than broken) file instead of mapping a label the graph never produced.
   const hasAudio = !!musicPath || !muted;
 
+  // Boosting can push the sum past full scale, which clips as crackle rather than as
+  // loudness. The limiter only enters the graph when something is actually being lifted —
+  // it is not free, and at or below unity there is nothing for it to catch.
+  if (hasBoost && hasAudio) {
+    filters.push(`[a]alimiter=limit=0.95[al]`);
+  }
+  // Whichever label the audio chain actually ended on.
+  const audioOut = hasAudio && hasBoost ? "[al]" : "[a]";
+
   parts.push(`-filter_complex "${filters.join(";")}"`);
-  parts.push(hasAudio ? `-map "[v]" -map "[a]"` : `-map "[v]" -an`);
+  parts.push(hasAudio ? `-map "[v]" -map "${audioOut}"` : `-map "[v]" -an`);
   parts.push(`-c:v ${HW} -b:v 8M -c:a aac -b:a 192k -movflags +faststart "${outFile}"`);
 
   return parts.join(" ");
