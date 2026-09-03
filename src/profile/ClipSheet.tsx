@@ -1,25 +1,29 @@
-// Playback, and the two things you can do with a device-only clip: edit it, or delete it.
+// Watch a clip from My videos, then edit it.
 //
-// Why a sheet rather than a route: tapping a local clip used to go straight to the EDITOR,
-// which meant there was no way to simply *watch* what you had recorded — the first thing
-// anyone wants from a list of their own videos. Playback is now the default destination and
-// editing is one explicit press away from it, so the two are no longer the same gesture.
+// Why a sheet rather than a route: tapping a clip used to go straight to the EDITOR, which
+// meant there was no way to simply *watch* what you had recorded — the first thing anyone
+// wants from a list of their own videos. Playback is the destination now and editing is a
+// deliberate press away, so the two are no longer the same gesture.
 //
-// There is deliberately no comment affordance here, and there cannot be one: a local clip
-// has never been uploaded, so there is no server row to attach a comment to and nobody who
-// could ever read it. See isServerBacked in src/library.ts — the rule is "no affordance",
-// not "an affordance that fails".
+// Every clip in the grid opens here, published or not. What differs is what it can carry:
+// a device-only clip gets the storage banner and Delete, because it is the only copy in
+// existence; a published one has a server row behind it and is not deletable from here.
+//
+// There is deliberately no comment affordance, and for a local clip there cannot be one:
+// it has never been uploaded, so there is no server row to attach a comment to and nobody
+// who could ever read it. See isServerBacked in src/library.ts — the rule is "no
+// affordance", not "an affordance that fails".
 import { useState } from "react";
 import { View, Text, Pressable, Modal, StyleSheet, Alert } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { font, isIOS, themedStyles, useTheme } from "../theme";
 import { usePlayerPlaying } from "../hooks/usePlayerPlaying";
-import { formatBytes } from "../localClips";
+import { formatBytes, isLocalOnly } from "../localClips";
 import Button from "../ui/Button";
 import type { Clip } from "../types";
 
-export default function LocalClipSheet({
+export default function ClipSheet({
   clip,
   onClose,
   onEdit,
@@ -34,6 +38,9 @@ export default function LocalClipSheet({
   const { c, type } = useTheme();
   const s = useStyles();
   const [note, setNote] = useState<string | null>(null);
+  // Only a device-only clip carries the storage banner and Delete — a published one has a
+  // server row behind it, and removing that is a different act from freeing a local file.
+  const local = isLocalOnly(clip);
   // Autoplays: the sheet exists to play the clip, so opening it and finding a still frame
   // would need a second press to do the one thing it is for.
   const player = useVideoPlayer(clip.uri, (p) => {
@@ -118,6 +125,7 @@ export default function LocalClipSheet({
           flags it; this is where the consequence is spelled out, because "saved" and
           "posted" are the two things a user is most likely to confuse.
         */}
+        {local ? (
         <View style={s.banner}>
           <View style={s.bannerHead}>
             <Text style={s.bannerLabel}>DEVICE ONLY</Text>
@@ -131,25 +139,67 @@ export default function LocalClipSheet({
             file.
           </Text>
         </View>
+        ) : null}
 
         {note ? <Text style={[type.note, s.note]}>{note}</Text> : null}
 
-        <View style={s.actions}>
-          <Button label="Edit" onPress={() => onEdit(clip)} grow />
-          <Button
-            label="Delete"
-            onPress={confirmDelete}
-            grow
-            style={{ borderColor: c.recBorder }}
-            accessibilityLabel={`Delete ${clip.name} from this device`}
-          />
-        </View>
+        {local ? (
+          <View style={s.actions}>
+            <Button
+              label="Delete"
+              onPress={confirmDelete}
+              grow
+              style={{ borderColor: c.recBorder }}
+              accessibilityLabel={`Delete ${clip.name} from this device`}
+            />
+          </View>
+        ) : null}
+
+        {/*
+          Edit floats rather than sitting in the row: it is the one thing you came here to do
+          after watching, so it stays reachable no matter how much the sheet below it grows.
+          A word, not a glyph — this app has no icon library, and every other control in it
+          is labelled in monospace for the same reason.
+        */}
+        <Pressable
+          onPress={() => onEdit(clip)}
+          style={s.fab}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${clip.name}`}
+        >
+          <Text style={s.fabLabel}>EDIT</Text>
+        </Pressable>
       </SafeAreaView>
     </Modal>
   );
 }
 
 const useStyles = themedStyles(({ c }) => ({
+  fab: {
+    position: "absolute",
+    right: 20,
+    bottom: isIOS ? 34 : 26,
+    paddingHorizontal: 22,
+    height: 52,
+    borderRadius: 99,
+    backgroundColor: c.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    // Lifted off whatever it covers, so it reads as floating rather than as part of the
+    // banner it overlaps.
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 16,
+    shadowOpacity: 0.4,
+    elevation: 8,
+  },
+  fabLabel: {
+    fontFamily: font.mono,
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 1,
+    color: "#FFFFFF",
+  },
   root: { flex: 1, backgroundColor: c.bg },
   header: {
     flexDirection: "row",

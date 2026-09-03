@@ -12,11 +12,11 @@ import { font, isIOS, themedStyles, useTheme } from "../../src/theme";
 import { getProfile } from "../../api/client";
 import { errorMessage } from "../../src/errors";
 import { fetchMyVideos } from "../../src/library";
-import { isLocalOnly, localFootprint } from "../../src/localClips";
+import { localFootprint } from "../../src/localClips";
 import { useClips } from "../../src/state/ClipsContext";
 import ProfileCard from "../../src/profile/ProfileCard";
 import VideoTile from "../../src/profile/VideoTile";
-import LocalClipSheet from "../../src/profile/LocalClipSheet";
+import ClipSheet from "../../src/profile/ClipSheet";
 import Card from "../../src/ui/Card";
 import Button from "../../src/ui/Button";
 import ErrorBox from "../../src/ui/ErrorBox";
@@ -106,20 +106,15 @@ export default function ProfileScreen() {
   const shown = tab === "videos" ? published : tab === "drafts" ? drafts : [];
   const footprint = useMemo(() => localFootprint(local), [local]);
 
-
   /**
    * Tapping a tile.
    *
-   * A device-only clip opens the player, not the editor: this list is where you go to
-   * watch what you have recorded, and "open" meaning "start editing" made watching your
-   * own clip impossible. The sheet still offers Edit, so the destructive-ish path is one
-   * explicit press rather than the default. A server clip has nothing local to preview,
-   * so it keeps going straight to the editor.
+   * Every clip opens the player first, published or not. Going straight to the editor made
+   * "watch what I made" impossible from the one screen that lists what you made; editing is
+   * now a deliberate press on the sheet's Edit button rather than the side effect of a tap.
    */
   function open(clip: Clip) {
-    if (isLocalOnly(clip)) return setPreview(clip);
-    selectClip(clip);
-    router.push("/editor");
+    setPreview(clip);
   }
 
   function editFromPreview(clip: Clip) {
@@ -263,7 +258,7 @@ export default function ProfileScreen() {
         player rather than leaving one alive behind the grid.
       */}
       {preview ? (
-        <LocalClipSheet
+        <ClipSheet
           clip={preview}
           onClose={() => setPreview(null)}
           onEdit={editFromPreview}
