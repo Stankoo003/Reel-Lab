@@ -8,6 +8,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSequence,
+  withSpring,
   withTiming,
 } from "react-native-reanimated";
 import { font, isIOS, themedStyles } from "../theme";
@@ -454,9 +455,32 @@ function RailButton({
   selected?: boolean;
   s: ReturnType<typeof useStyles>;
 }) {
+  /*
+    A press punches the disc in and springs it back.
+    
+    These controls sit on top of moving video, where a colour change alone is easy to miss —
+    the picture underneath is already changing. Motion is the one signal the clip cannot
+    accidentally imitate, so it is what confirms the tap landed.
+    
+    Only the disc moves, not the caption: the count underneath changes its own value, and
+    animating both makes the pair read as one wobbling object.
+  */
+  const scale = useSharedValue(1);
+  const discStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  const press = () => {
+    // Quick timing in, spring out. A spring both ways overshoots on the way down and reads
+    // as slack rather than as a button.
+    scale.value = withSequence(
+      withTiming(0.84, { duration: 90 }),
+      withSpring(1, { damping: 9, stiffness: 260 })
+    );
+    onPress();
+  };
+
   return (
     <Pressable
-      onPress={onPress}
+      onPress={press}
       style={s.railItem}
       // The label is small; the touch target must not be.
       hitSlop={12}
@@ -465,9 +489,9 @@ function RailButton({
       accessibilityState={{ selected }}
       accessibilityValue={accessibilityValue}
     >
-      <View style={[s.railCircle, active && s.railCircleActive]}>
+      <Animated.View style={[s.railCircle, active && s.railCircleActive, discStyle]}>
         <Text style={s.railGlyph}>{label}</Text>
-      </View>
+      </Animated.View>
       {caption ? (
         <Text style={[s.railCaption, active && s.railCaptionActive]}>{caption}</Text>
       ) : null}
