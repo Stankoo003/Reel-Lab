@@ -101,6 +101,13 @@ function TextTiming({
 }) {
   const width = useRef(0);
   const [drag, setDrag] = useState<{ start: number; end: number } | null>(null);
+  // The same values as `drag`, in a ref.
+  //
+  // Committing from inside a setDrag updater is what produced "Cannot update a component
+  // (ClipsProvider) while rendering a different component": React runs updater functions
+  // during render, so calling the editor's setSettings from one is a cross-component write
+  // mid-render. The ref lets release read the latest values without an updater.
+  const at = useRef<{ start: number; end: number } | null>(null);
 
   const span = Math.max(0.1, trimOut - trimIn);
   const start = drag ? drag.start : el.start;
@@ -115,7 +122,8 @@ function TextTiming({
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         const l = live.current;
-        setDrag({ start: l.el.start, end: l.el.end });
+        at.current = { start: l.el.start, end: l.el.end };
+        setDrag(at.current);
       },
       onPanResponderMove: (_e, g) => {
         const l = live.current;
@@ -128,22 +136,27 @@ function TextTiming({
             Math.max(l.trimIn, l.el.start + delta),
             l.el.end - MIN_CAPTION
           );
-          setDrag({ start: next, end: l.el.end });
+          at.current = { start: next, end: l.el.end };
+          setDrag(at.current);
         } else {
           const next = Math.max(
             Math.min(l.trimOut, l.el.end + delta),
             l.el.start + MIN_CAPTION
           );
-          setDrag({ start: l.el.start, end: next });
+          at.current = { start: l.el.start, end: next };
+          setDrag(at.current);
         }
       },
       onPanResponderRelease: () => {
-        setDrag((d) => {
-          if (d) live.current.onCommit(d.start, d.end);
-          return null;
-        });
+        const d = at.current;
+        setDrag(null);
+        at.current = null;
+        if (d) live.current.onCommit(d.start, d.end);
       },
-      onPanResponderTerminate: () => setDrag(null),
+      onPanResponderTerminate: () => {
+        setDrag(null);
+        at.current = null;
+      },
     });
 
   const pans = useMemo(() => ({ start: makePan("start"), end: makePan("end") }), []);
