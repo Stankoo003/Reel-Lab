@@ -27,8 +27,8 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_APP_ENV": "production",
-        "EXPO_PUBLIC_API_BASE_URL": "https://islamist-headgear-pants.ngrok-free.dev",
-        "EXPO_PUBLIC_MEDIA_BASE_URL": "https://islamist-headgear-pants.ngrok-free.dev/media"
+        "EXPO_PUBLIC_API_BASE_URL": "https://reel-lab-two.vercel.app",
+        "EXPO_PUBLIC_MEDIA_BASE_URL": "https://pub-c6cd19b85ac444d69c5c16d445b91465.r2.dev"
       },
       "ios": {
         "image": "latest"
