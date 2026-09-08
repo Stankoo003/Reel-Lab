@@ -4,7 +4,6 @@
 // regenerated, and the OS is free to reclaim the cache directory whenever it wants the
 // space. Same reasoning as recorded clips — see src/clips.ts.
 import { Directory, File, Paths } from "expo-file-system";
-import { setAudioModeAsync } from "expo-audio";
 
 /** Where takes live. One directory so a clean-up can find all of them. */
 function voiceDir(): Directory {
@@ -40,21 +39,10 @@ export function discardTake(uri: string | null): void {
 }
 
 /**
- * iOS refuses to record while the session is configured for playback, and leaves the
- * session in recording mode afterwards — which makes subsequent playback quiet and routed
- * to the earpiece. So the mode is set on the way in AND restored on the way out.
+ * The session switch, re-exported.
  *
- * The restore values mirror app/_layout.tsx, which sets the app's normal playback policy.
+ * It used to be defined here, which meant the camera — the app's other recorder — either
+ * imported it from a module named after voice-over or, as it did, forgot it entirely and
+ * failed to record at all. It belongs to the session, not to this feature.
  */
-export async function beginRecordingMode(): Promise<void> {
-  await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-}
-
-export async function endRecordingMode(): Promise<void> {
-  await setAudioModeAsync({
-    allowsRecording: false,
-    playsInSilentMode: true,
-    shouldPlayInBackground: false,
-    interruptionMode: "doNotMix",
-  });
-}
+export { beginRecordingMode, endRecordingMode } from "./audioSession";

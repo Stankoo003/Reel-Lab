@@ -20,6 +20,7 @@
     "node_modules",
     "media",
     "server",
+    "server-spring",
     "android",
     "ios"
   ]

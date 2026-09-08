@@ -24,8 +24,12 @@ import type { FieldErrors, Profile } from "../../api/client";
  *  form and the profile cannot start suggesting different things. */
 export const BIO_PLACEHOLDER = "Your wonderful bio";
 
+/** The same arrangement for the real name. */
+export const NAME_PLACEHOLDER = "Your first and last name";
+
 const MAX_BIO = 500;
 const MAX_DISPLAY_NAME = 100;
+const MAX_FULL_NAME = 100;
 
 /*
  * Switching between viewing and editing used to be a single frame: the stats and the button
@@ -44,10 +48,24 @@ const ENTER = FadeIn.duration(180);
 const EXIT = FadeOut.duration(110);
 const RESIZE = LinearTransition.duration(220);
 
+/**
+ * The Follow control's state, owned by the screen rather than by this card.
+ *
+ * The screen is what holds the request, the optimistic flip and the error, because it is
+ * also what reloads the profile afterwards. Passing the state down keeps this component
+ * what it already is: a rendering of a profile.
+ */
+export type FollowControl = {
+  following: boolean;
+  busy: boolean;
+  onToggle: () => void;
+};
+
 export default function ProfileCard({
   profile,
   editable,
   onSaved,
+  follow,
 }: {
   profile: Profile;
   /**
@@ -56,12 +74,18 @@ export default function ProfileCard({
    */
   editable: boolean;
   onSaved: (updated: Profile) => void;
+  /**
+   * Present only on someone else's profile. Absent on your own, where following yourself
+   * is not a thing the server allows and the button would be a control that cannot work.
+   */
+  follow?: FollowControl;
 }) {
   const { c, type } = useTheme();
   const s = useStyles();
 
   const [editing, setEditing] = useState(false);
   const [displayName, setDisplayName] = useState(profile.displayName ?? "");
+  const [fullName, setFullName] = useState(profile.fullName ?? "");
   const [bio, setBio] = useState(profile.bio ?? "");
   /** Set once a new avatar is picked and uploaded; null means "keep the current one". */
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
@@ -78,12 +102,13 @@ export default function ProfileCard({
   useEffect(() => {
     setEditing(false);
     setDisplayName(profile.displayName ?? "");
+    setFullName(profile.fullName ?? "");
     setBio(profile.bio ?? "");
     setAvatarPath(null);
     setPreview(null);
     setFieldErrors({});
     setFormError(null);
-  }, [profile.id, profile.displayName, profile.bio]);
+  }, [profile.id, profile.displayName, profile.fullName, profile.bio]);
 
   async function pickAvatar() {
     setFormError(null);
@@ -121,7 +146,12 @@ export default function ProfileCard({
     setFieldErrors({});
     setFormError(null);
     try {
-      const updated = await updateProfile(profile.id ?? "", { displayName, bio, avatarPath });
+      const updated = await updateProfile(profile.id ?? "", {
+        displayName,
+        fullName,
+        bio,
+        avatarPath,
+      });
       onSaved(updated);
       setEditing(false);
       setPreview(null);
@@ -144,6 +174,7 @@ export default function ProfileCard({
   function cancel() {
     setEditing(false);
     setDisplayName(profile.displayName ?? "");
+    setFullName(profile.fullName ?? "");
     setBio(profile.bio ?? "");
     setAvatarPath(null);
     setPreview(null);
@@ -198,13 +229,27 @@ export default function ProfileCard({
 
         <Animated.View style={s.identity} layout={RESIZE}>
           {editing ? (
-            <Animated.View key="name-field" entering={ENTER} exiting={EXIT}>
+            <Animated.View key="name-field" entering={ENTER} exiting={EXIT} style={s.nameFields}>
               <Field
                 label="DISPLAY NAME"
                 value={displayName}
                 onChangeText={setDisplayName}
                 error={fieldErrors.displayName}
                 maxLength={MAX_DISPLAY_NAME}
+              />
+              {/*
+                Two different things, so two fields. The display name is what the app shows
+                everywhere; this is the person's actual name, and it is optional — leaving it
+                empty clears it, which is why the server distinguishes an absent field from a
+                blank one.
+              */}
+              <Field
+                label="NAME"
+                value={fullName}
+                onChangeText={setFullName}
+                placeholder={NAME_PLACEHOLDER}
+                error={fieldErrors.fullName}
+                maxLength={MAX_FULL_NAME}
               />
             </Animated.View>
           ) : (
@@ -213,11 +258,21 @@ export default function ProfileCard({
                 {profile.displayName ?? "—"}
               </Text>
               {/*
-                The design carries a role-and-place line here ("Field service · Novi Sad").
-                No such field exists on the profile record, so the row holds its place with
-                an em dash rather than showing something the server never said.
+                The line under the display name is who this person actually is, which is what
+                the design's role-and-place line was reaching for. It briefly held a follower
+                count — a number, in the one row on the page that is about identity — and that
+                was the wrong thing in the right place. The count moved into the stat grid,
+                where the other numbers live.
+
+                Empty prompts you to add one, but only on YOUR profile and dimmed, so it can
+                never be mistaken for a name somebody actually gave. Someone else's empty name
+                shows nothing at all: a prompt there is an instruction you cannot follow.
               */}
-              <Text style={s.subtitle}>—</Text>
+              {profile.fullName ? (
+                <Text style={s.subtitle}>{profile.fullName}</Text>
+              ) : editable ? (
+                <Text style={[s.subtitle, s.subtitleEmpty]}>{NAME_PLACEHOLDER}</Text>
+              ) : null}
               {/*
                 An empty bio prompts you to write one — but only on YOUR profile, and dimmer
                 than real text so it never passes for something the user actually wrote.
@@ -271,14 +326,42 @@ export default function ProfileCard({
           <StatGrid
             stats={[
               { label: "VIDEOS", value: compactCount(activity?.publishedVideos ?? 0) },
-              // No view tracking exists on the server yet — see VideoResponse. Shown as 0
-              // rather than an em dash: for an account that has never been viewed 0 is also
-              // the true answer, and a dash in a row of numbers reads as a broken cell.
-              // Revisit when views land — until then this is a floor, not a measurement.
-              { label: "VIEWS", value: compactCount(0) },
+              // Was VIEWS, which the server does not track — a cell that could only ever
+              // say 0. Views can come back here when they exist.
+              { label: "FOLLOWERS", value: compactCount(activity?.followers ?? 0) },
+              // Moved here from the line under the name once that line became the person's
+              // real name. A count belongs with the other counts.
+              { label: "FOLLOWING", value: compactCount(activity?.following ?? 0) },
               { label: "LIKES", value: compactCount(activity?.likesReceived ?? 0) },
             ]}
           />
+
+          {/*
+            Your own profile edits; someone else's is followed. Never both, and never
+            neither — the row below is the one place an action on this profile lives.
+          */}
+          {!editable && follow ? (
+            <View style={s.actions}>
+              <Button
+                // The label states what pressing it will do while it is idle, and what is
+                // true while the request is out — a button that says "Follow" after you
+                // pressed it looks like the press was lost.
+                label={follow.busy ? "…" : follow.following ? "Following" : "Follow"}
+                onPress={follow.onToggle}
+                // Filled while not following, outlined once you do: the accent is the call
+                // to action, and keeping it after the action reads as "not done yet".
+                variant={follow.following ? "secondary" : "primary"}
+                size="compact"
+                grow
+                disabled={follow.busy}
+                accessibilityLabel={
+                  follow.following
+                    ? `Unfollow ${profile.displayName ?? profile.username}`
+                    : `Follow ${profile.displayName ?? profile.username}`
+                }
+              />
+            </View>
+          ) : null}
 
           {/* Absent, not disabled, on someone else's profile. */}
           {editable ? (
@@ -329,7 +412,11 @@ const useStyles = themedStyles(({ c }) => ({
     borderColor: c.bg,
   },
   avatarBadgeText: { fontFamily: font.mono, fontSize: 8.5, fontWeight: "600", color: "#FFFFFF" },
-  subtitle: { fontFamily: font.mono, fontSize: 12, color: c.w42, marginTop: 4 },
+  subtitle: { fontFamily: font.sans, fontSize: 13, color: c.w55, marginTop: 4 },
+  // Dimmer and italic, like the empty bio below it — the two prompts read as one kind of
+  // thing rather than as two different states.
+  subtitleEmpty: { color: c.w38, fontStyle: "italic" },
+  nameFields: { gap: 12 },
   bio: { fontFamily: font.sans, fontSize: 12.5, lineHeight: 12.5 * 1.45, color: c.w60, marginTop: 7 },
   // Dimmer than a written bio, so the difference is visible without reading it.
   bioEmpty: { color: c.w38, fontStyle: "italic" },

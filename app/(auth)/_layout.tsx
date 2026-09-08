@@ -2,7 +2,7 @@ import { Stack } from "expo-router";
 import { FixedTheme } from "../../src/theme";
 
 /**
- * The sign-in flow.
+ * The sign-in flow, and getting back in when the password is gone.
  *
  * Pinned dark: design 2b is drawn dark-only, and these two screens are one continuous
  * proposition rather than app chrome that should follow the device.
@@ -22,6 +22,13 @@ export default function AuthLayout() {
       <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
         <Stack.Screen name="login" />
         <Stack.Screen name="signup" />
+        <Stack.Screen name="forgot-password" />
+        {/*
+          Also the target of the deep link reellab://reset-password?token=… , which the web
+          fallback page hands over when the app turns out to be installed. The root gate
+          leaves this route alone in both directions — see app/_layout.tsx.
+        */}
+        <Stack.Screen name="reset-password" />
       </Stack>
     </FixedTheme>
   );

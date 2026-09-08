@@ -53,3 +53,7 @@ assets/spike/sample.mp4
 !.env.example
 !.env.production.example
 scripts/media/.env.r2
+
+# Claude Code scratch and agent worktrees
+.claude/worktrees/
+.scratch/

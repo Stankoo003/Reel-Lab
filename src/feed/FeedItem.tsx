@@ -17,14 +17,14 @@ import type { VideoPlayer, VideoPlayerStatus } from "expo-video";
 import type { Clip } from "../types";
 
 /**
- * The heart that flashes on a double tap.
+ * The word LIKE that flashes on a double tap.
  *
  * The gesture already worked, but the only sign of it was the rail button changing colour
  * in the corner — nowhere near where the finger was. A confirmation that appears somewhere
  * other than where you acted reads as a coincidence, not as a response.
  *
  * Deliberately not tied to `liked`: it fires on the ACTION, so double-tapping to unlike
- * shows nothing rather than a heart that means the opposite of what just happened.
+ * shows nothing rather than a LIKE that means the opposite of what just happened.
  */
 function useLikeBurst() {
   const scale = useSharedValue(0);
@@ -66,6 +66,7 @@ export default function FeedItem({
   liked,
   likeCount,
   onOpenProfile,
+  onShare,
   canEdit,
   onEdit,
 }: {
@@ -95,6 +96,8 @@ export default function FeedItem({
   likeCount: number;
   /** Null when the clip carries no owner — a locally recorded one never does. */
   onOpenProfile: (() => void) | null;
+  /** Null for a local clip: sharing sends a server row into a thread, and there is none. */
+  onShare: (() => void) | null;
   /** False for someone else's clip — the long-press and its hint are then withheld. */
   canEdit: boolean;
   onEdit: () => void;
@@ -168,13 +171,15 @@ export default function FeedItem({
 
   function retry() {
     if (!player) return;
-    try {
-      // Reload only. Whether it should then be playing is the pool's decision, not this
-      // row's — calling play() here started audio on a row that was not even active.
-      player.replace({ uri: clip.uri });
-    } catch {
-      // the pool took the player back; the next swipe will reassign one
-    }
+    // Reload only. Whether it should then be playing is the pool's decision, not this
+    // row's — calling play() here started audio on a row that was not even active.
+    //
+    // Async for the same reason the pool is: `replace` opens the asset on the UI thread and
+    // holds it. Here that would freeze the screen on the tap meant to un-freeze it.
+    player.replaceAsync({ uri: clip.uri }).catch(() => {
+      // The pool took the player back, or the source is still unreachable. Either way the
+      // row keeps its poster and its retry.
+    });
   }
 
   // A recycled player means a different clip: show the poster again until the new
@@ -214,7 +219,7 @@ export default function FeedItem({
     // held single tap and run the double-tap action in its place. Playback is untouched,
     // so a double tap likes without also pausing.
     if (clearPendingTap()) {
-      // Only when there is something to like — a local clip has no server row, so a heart
+      // Only when there is something to like — a local clip has no server row, so a burst
       // there would promise an action that never happened.
       if (onToggleLike) {
         onToggleLike();
@@ -311,7 +316,7 @@ export default function FeedItem({
       {/* Centred rather than at the finger: a tap anywhere on the row likes, so there is no
           single point the gesture "happened at", and the middle is where the eye already is. */}
       <Animated.View pointerEvents="none" style={[s.likeBurst, burstStyle]}>
-        <Text style={s.likeBurstGlyph}>{"\u2665\uFE0E"}</Text>
+        <Text style={s.likeBurstGlyph}>LIKE</Text>
       </Animated.View>
 
       <View pointerEvents="none" style={s.scrim} />
@@ -364,17 +369,17 @@ export default function FeedItem({
               />
             ) : null}
 
-            {/*
-              The design carries a share control here. Nothing in the app shares a clip yet,
-              so it renders as the shape it will be rather than as a button that would do
-              nothing when pressed — not focusable, not announced as actionable.
-            */}
-            <View style={s.railItem} importantForAccessibility="no-hide-descendants">
-              <View style={s.railCircle}>
-                <Text style={s.railGlyph}>SHARE</Text>
-              </View>
-              <Text style={s.railCaption}>{compactCount(0)}</Text>
-            </View>
+            {/* Into a conversation, not the OS sheet: the clip lives here, and so do the
+                people to show it to. Absent for a local clip, same rule as comments. */}
+            {onShare ? (
+              <RailButton
+                label="SHARE"
+                active={false}
+                onPress={onShare}
+                accessibilityLabel="Share to a conversation"
+                s={s}
+              />
+            ) : null}
           </View>
         ) : null}
 
@@ -383,18 +388,36 @@ export default function FeedItem({
           <Text style={s.title} numberOfLines={2}>
             {clip.name}
           </Text>
-          {onOpenProfile ? (
-            <Pressable
-              onPress={onOpenProfile}
-              hitSlop={8}
-              accessibilityRole="link"
-              accessibilityLabel={`View ${clip.ownerName ?? "this user"}'s profile`}
-            >
+          {/*
+            The handle and, when it applies, the fact that you follow them. Next to the name
+            rather than under it: it is a statement ABOUT this author, and a line of its own
+            would read as a separate piece of metadata about the clip.
+          */}
+          <View style={s.ownerRow}>
+            {onOpenProfile ? (
+              <Pressable
+                onPress={onOpenProfile}
+                hitSlop={8}
+                accessibilityRole="link"
+                accessibilityLabel={`View ${clip.ownerName ?? "this user"}'s profile`}
+              >
+                <Text style={s.owner}>@{clip.ownerName ?? "unknown"}</Text>
+              </Pressable>
+            ) : (
               <Text style={s.owner}>@{clip.ownerName ?? "unknown"}</Text>
-            </Pressable>
-          ) : (
-            <Text style={s.owner}>@{clip.ownerName ?? "unknown"}</Text>
-          )}
+            )}
+            {/*
+              Absent when you do not follow them, rather than an unlit "Follow" chip: this
+              is a label, not a button. Following happens on the profile, which the handle
+              beside it already opens — a second control here would compete with the swipe
+              that drives the whole feed.
+            */}
+            {clip.ownerFollowedByViewer ? (
+              <View style={s.followChip}>
+                <Text style={s.followChipText}>FOLLOWING</Text>
+              </View>
+            ) : null}
+          </View>
           {canEdit ? <Text style={s.hint}>hold to edit</Text> : null}
         </View>
 
@@ -544,16 +567,34 @@ const useStyles = themedStyles(({ c }) => ({
     left: 0,
     right: 0,
     top: "50%",
-    marginTop: -55,
+    // Half the line height, so the word is centred on the row rather than hanging below the
+    // middle — this was -55 for the 120pt heart it replaced.
+    marginTop: -28,
     alignItems: "center",
   },
-  // The variation selector on the glyph forces TEXT presentation. Without it iOS draws
-  // U+2665 as a red emoji, which ignores `color` and clashes with the rest of the chrome.
+  /*
+   * The word, not a heart.
+   *
+   * It also removes a platform problem the heart had: U+2665 draws as a red EMOJI on iOS
+   * unless a variation selector forces text presentation, and an emoji ignores `color`
+   * entirely. A word has no such second rendering.
+   *
+   * Mono and letterspaced, because that is how every other label in this app is set — the
+   * rail beside it says LIKE, SOUND, CHAT, SHARE in exactly this face. A word is wider than
+   * a glyph, so the size drops from 110 to 46 to keep it inside a narrow phone.
+   */
   likeBurstGlyph: {
-    fontSize: 110,
-    lineHeight: 120,
+    fontFamily: font.mono,
+    fontSize: 46,
+    lineHeight: 56,
+    fontWeight: "600",
+    letterSpacing: 6,
+    // letterSpacing is applied after the LAST letter too, so the text box is 6pt wider than
+    // the word and centring it leaves the word sitting 3pt right of centre. This takes that
+    // half back — the same correction any letterspaced centred type needs.
+    marginLeft: -3,
     color: "#FFFFFF",
-    // A white heart on a bright frame vanishes; the shadow is what keeps it readable over
+    // White type on a bright frame vanishes; the shadow is what keeps it readable over
     // whatever the clip happens to be showing.
     textShadowColor: "rgba(0,0,0,0.45)",
     textShadowRadius: 18,
@@ -654,6 +695,24 @@ const useStyles = themedStyles(({ c }) => ({
     color: "rgba(255,255,255,0.92)",
     textShadowColor: "rgba(0,0,0,0.55)",
     textShadowRadius: 4,
+  },
+  ownerRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  // A bordered pill rather than filled: on a frame that could be any colour, an outline
+  // reads at every exposure, and a fill would have to be dark enough to win against white
+  // video — at which point it competes with the title above it.
+  followChip: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 99,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.45)",
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  followChipText: {
+    fontFamily: font.mono,
+    fontSize: 8.5,
+    letterSpacing: 0.7,
+    color: "rgba(255,255,255,0.95)",
   },
   hint: {
     fontFamily: font.mono,

@@ -5,7 +5,12 @@ import { Redirect, Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../src/state/AuthContext";
+// Imported for its effect: the module subscribes to the session and opens or closes the one
+// socket the app has. Importing it here means that happens once, at startup, rather than
+// whenever a chat screen happens to mount.
+import "../src/chat/socket";
 import { ClipsProvider } from "../src/state/ClipsContext";
+import { PLAYBACK_MODE } from "../src/audioSession";
 import { useTheme } from "../src/theme";
 
 export default function RootLayout() {
@@ -54,11 +59,7 @@ function RootNavigator() {
         AUDIOFOCUS_GAIN request. Either way playback stops and the pool re-asserts it
         when the app comes back — see useVideoPool.
     */
-    setAudioModeAsync({
-      playsInSilentMode: true,
-      shouldPlayInBackground: false,
-      interruptionMode: "doNotMix",
-    }).catch(() => {
+    setAudioModeAsync({ ...PLAYBACK_MODE }).catch(() => {
       // Non-fatal: playback still works. It just falls back to the platform default,
       // which on iOS means the silent switch wins.
     });
@@ -77,7 +78,24 @@ function RootNavigator() {
 
     Route groups are not part of the URL, so `app/(auth)/login.tsx` is `/login` here.
   */
-  const inAuthGroup = pathname.startsWith("/login") || pathname.startsWith("/signup");
+  const inAuthGroup =
+    pathname.startsWith("/login")
+    || pathname.startsWith("/signup")
+    || pathname.startsWith("/forgot-password")
+    || pathname.startsWith("/reset-password");
+
+  /*
+    Reset is the one auth screen that both halves of the gate have to leave alone.
+
+    Signed out, it must not be redirected to /login — a reset link carries its token in the
+    URL, and bouncing to the sign-in screen throws that token away, which turns every emailed
+    link into a dead one.
+
+    Signed in, it must not be redirected to the feed either. Following a reset link while a
+    session happens to be alive on this phone is exactly what someone does when they think
+    that session is not theirs — and the reset is what ends it.
+  */
+  const isResetLink = pathname.startsWith("/reset-password");
 
   // Not while already inside the auth group — redirecting to where you are is a loop.
   if (status === "signedOut" && !inAuthGroup) {
@@ -86,7 +104,7 @@ function RootNavigator() {
 
   // Signed in and still on a sign-in screen: the session just arrived. `/(tabs)` lands on
   // the feed, which is the first trigger in the tab bar.
-  if (status === "signedIn" && inAuthGroup) {
+  if (status === "signedIn" && inAuthGroup && !isResetLink) {
     return <Redirect href="/(tabs)" />;
   }
 
@@ -126,8 +144,15 @@ function RootNavigator() {
           <Stack.Screen name="user" options={{ presentation: "modal" }} />
           {/* The profile's link as a scannable code. Pushed from the profile's Share action. */}
           <Stack.Screen name="share" options={{ presentation: "modal" }} />
+          {/* A clip into a conversation. Pushed from the feed's SHARE control. */}
+          <Stack.Screen name="share-video" options={{ presentation: "modal" }} />
           {/* Account, health and environment. Pushed from the profile's Settings action. */}
           <Stack.Screen name="settings" options={{ presentation: "modal" }} />
+          {/*
+            One conversation. The LIST is a tab — app/(tabs)/inbox.tsx — but a thread is
+            pushed, from the inbox or straight from a profile's Message button.
+          */}
+          <Stack.Screen name="thread" />
         </Stack>
       <StatusBar style="auto" />
     </>

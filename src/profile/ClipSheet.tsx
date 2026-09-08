@@ -31,9 +31,14 @@ export default function ClipSheet({
 }: {
   clip: Clip;
   onClose: () => void;
-  onEdit: (clip: Clip) => void;
+  /**
+   * Omitted on someone else's profile, where there is nothing to edit — the FAB is then
+   * absent rather than present and refused. Exporting a new video from a clip you do not
+   * own is not a thing the server would allow anyway; see canEdit in src/library.ts.
+   */
+  onEdit?: (clip: Clip) => void;
   /** Already confirmed by this sheet. Returns whether the file itself was removed. */
-  onDelete: (clip: Clip) => boolean;
+  onDelete?: (clip: Clip) => boolean;
 }) {
   const { c, type } = useTheme();
   const s = useStyles();
@@ -68,7 +73,8 @@ export default function ClipSheet({
             } catch {
               // already released; the delete is what matters
             }
-            const removed = onDelete(clip);
+            // Only reachable from the Delete button, which is not rendered without it.
+            const removed = onDelete?.(clip) ?? false;
             if (removed) return onClose();
             // The entry is gone either way (see removeClip), but the file was not there to
             // remove — say so rather than implying storage was freed.
@@ -143,7 +149,7 @@ export default function ClipSheet({
 
         {note ? <Text style={[type.note, s.note]}>{note}</Text> : null}
 
-        {local ? (
+        {local && onDelete ? (
           <View style={s.actions}>
             <Button
               label="Delete"
@@ -161,14 +167,16 @@ export default function ClipSheet({
           A word, not a glyph — this app has no icon library, and every other control in it
           is labelled in monospace for the same reason.
         */}
-        <Pressable
-          onPress={() => onEdit(clip)}
-          style={s.fab}
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${clip.name}`}
-        >
-          <Text style={s.fabLabel}>EDIT</Text>
-        </Pressable>
+        {onEdit ? (
+          <Pressable
+            onPress={() => onEdit(clip)}
+            style={s.fab}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit ${clip.name}`}
+          >
+            <Text style={s.fabLabel}>EDIT</Text>
+          </Pressable>
+        ) : null}
       </SafeAreaView>
     </Modal>
   );

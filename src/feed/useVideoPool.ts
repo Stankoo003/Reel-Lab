@@ -2,7 +2,7 @@
 //
 // One VideoPlayer per row does not survive a real feed: each holds a decoder and its
 // own buffers, so a few dozen rows exhausts memory and the scroll stutters. Instead
-// three players are created once and `replace()`d as the active index moves.
+// three players are created once and re-sourced as the active index moves.
 //
 // The neighbours are loaded but paused, which is what gives preloading for free — the
 // next clip has already buffered by the time the user swipes to it.
@@ -108,21 +108,51 @@ export function useVideoPool({
     const free = players.filter((player) => !kept.includes(player));
 
     let changed = next.size !== assignmentRef.current.size;
+    // Collected rather than performed inline: the assignment has to be published BEFORE the
+    // loads start, so a load that finishes immediately can tell whether it is still wanted.
+    const swaps: { index: number; player: VideoPlayer; clip: Clip }[] = [];
     for (const index of wanted) {
       if (next.has(index)) continue;
       const player = free.shift();
       if (!player) continue;
-      try {
-        player.replace({ uri: items[index].uri });
-        player.currentTime = 0;
-      } catch {
-        // a source that fails to load leaves the row on its poster
-      }
       next.set(index, { player, clipId: items[index].id });
+      swaps.push({ index, player, clip: items[index] });
       changed = true;
     }
 
-    if (changed) setAssignment(next);
+    if (changed) {
+      // The ref is updated here, not left to the next render, because the swaps below read
+      // it from a promise callback that can run before React re-renders.
+      assignmentRef.current = next;
+      setAssignment(next);
+    }
+
+    /*
+      replaceAsync, never replace.
+
+      On iOS `replace` opens the asset synchronously ON THE UI THREAD — expo's own docs say
+      it "can block it for extended periods of time", and the app logs a warning every time
+      it is called. What that looks like to a viewer is the bug it caused: a swipe that
+      stops halfway, holds, judders, and only then continues, because the thread driving the
+      scroll was busy opening a video file.
+
+      Nothing is awaited. The row already has its player and its poster; the picture appears
+      when the asset is ready, and the scroll never waits for it.
+    */
+    for (const { index, player, clip } of swaps) {
+      player
+        .replaceAsync({ uri: clip.uri })
+        .then(() => {
+          // A fast scroll can hand this player to another row while its asset was loading.
+          // Rewinding it then would seek whatever it now holds back to zero, mid-playback.
+          const slot = assignmentRef.current.get(index);
+          if (slot?.player !== player || slot.clipId !== clip.id) return;
+          player.currentTime = 0;
+        })
+        .catch(() => {
+          // A source that fails to load leaves the row on its poster.
+        });
+    }
   }, [items, activeIndex]);
 
   // Only the active player runs, and only it is audible.

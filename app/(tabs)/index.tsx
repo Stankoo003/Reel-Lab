@@ -20,6 +20,7 @@ import { canEdit, isServerBacked, fetchFeedPage } from "../../src/library";
 import { useCursorPage } from "../../src/hooks/useCursorPage";
 import ErrorBox from "../../src/ui/ErrorBox";
 import { likeVideo, unlikeVideo } from "../../api/client";
+import { consumeFeedRefresh } from "../../src/feed/refreshSignal";
 import { useVideoPool } from "../../src/feed/useVideoPool";
 import FeedItem from "../../src/feed/FeedItem";
 import type { Clip } from "../../src/types";
@@ -108,11 +109,15 @@ function FeedScreen() {
   useFocusEffect(
     useCallback(() => {
       setFocused(true);
+      // Only when something was published while we were away. An unconditional reload here
+      // would discard the reader's position and restart playback every time they came back
+      // from another tab.
+      if (consumeFeedRefresh()) reload();
       return () => {
         setFocused(false);
         pauseAll();
       };
-    }, [pauseAll])
+    }, [pauseAll, reload])
   );
 
   useEffect(() => {
@@ -141,6 +146,21 @@ function FeedScreen() {
   const openComments = useCallback(
     (clip: Clip) =>
       router.push({ pathname: "/comments", params: { videoId: clip.id, title: clip.name } }),
+    [router]
+  );
+
+  const openShare = useCallback(
+    (clip: Clip) =>
+      router.push({
+        pathname: "/share-video",
+        params: {
+          videoId: clip.id,
+          title: clip.name,
+          ownerName: clip.ownerName ?? "",
+          // The poster is a plain CDN URL for a server clip — see toClip in src/library.ts.
+          posterUrl: clip.thumb && "uri" in clip.thumb ? String(clip.thumb.uri ?? "") : "",
+        },
+      }),
     [router]
   );
 
@@ -218,6 +238,7 @@ function FeedScreen() {
         liked={item.likedByViewer === true}
         likeCount={item.likeCount ?? 0}
         onOpenProfile={item.ownerId ? () => openProfile(item.ownerId!) : null}
+        onShare={isServerBacked(item) ? () => openShare(item) : null}
         canEdit={canEdit(item)}
         onEdit={() => openEditor(item)}
       />
@@ -231,6 +252,7 @@ function FeedScreen() {
       toggleMute,
       openEditor,
       openComments,
+      openShare,
       toggleLike,
       openProfile,
     ]
@@ -289,7 +311,21 @@ function FeedScreen() {
           initialNumToRender={2}
           maxToRenderPerBatch={3}
           windowSize={3}
-          removeClippedSubviews
+          /*
+            removeClippedSubviews is deliberately NOT set.
+
+            It crashed a tester mid-scroll: React Native's clipping pass enumerates a view's
+            subviews and something mutates that array underneath it, which Objective-C
+            answers with __NSFastEnumerationMutationHandler and an abort — the whole app
+            gone, from a scroll. The trace is inside
+            RCTViewComponentView.updateClippedSubviewsWithClipRect, which only runs when this
+            prop is on, and it is on the new architecture that the app enables.
+
+            It also has little left to do here. What it saves is mounted views, and the
+            expensive thing in this list is not a view but a decoder — useVideoPool holds
+            exactly three players however long the feed grows, and windowSize={3} already
+            keeps the mounted window to three screens.
+          */
           onEndReached={loadMore}
           // Two screens of runway, so the next page has landed — and the pool has
           // preloaded its first clip — before the reader swipes onto it.

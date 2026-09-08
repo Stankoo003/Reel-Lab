@@ -25,7 +25,11 @@ export default function StatGrid({ stats }: { stats: readonly Stat[] }) {
           accessibilityLabel={`${stat.value} ${stat.label.toLowerCase()}`}
         >
           <Text style={type.statValue}>{stat.value}</Text>
-          <Text style={[type.label, s.cellLabel]}>{stat.label}</Text>
+          {/* One line, always. The grid went from three cells to four when FOLLOWING moved
+              in, and a label that wraps would make one cell taller than its neighbours. */}
+          <Text style={[type.label, s.cellLabel]} numberOfLines={1}>
+            {stat.label}
+          </Text>
         </View>
       ))}
     </View>
@@ -47,6 +51,7 @@ const useStyles = themedStyles(({ c }) => ({
     flex: 1,
     backgroundColor: c.panel,
     paddingVertical: 13,
+    paddingHorizontal: 4,
     alignItems: "center",
     borderRadius: isIOS ? 0 : 12,
   },

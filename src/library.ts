@@ -33,6 +33,7 @@ function toClip(v: VideoResponse): Clip {
     thumb: v.posterUrl ? { uri: v.posterUrl } : null,
     likeCount: v.likeCount ?? 0,
     likedByViewer: v.likedByViewer ?? false,
+    ownerFollowedByViewer: v.ownerFollowedByViewer ?? false,
   };
 }
 
@@ -65,6 +66,16 @@ export type FeedPage = {
 export async function fetchFeedPage(cursor?: string | null): Promise<FeedPage> {
   const page = await fetchFeedPageRaw(cursor);
   return { clips: page.items.map(toClip), nextCursor: page.nextCursor, hasNext: page.hasNext };
+}
+
+/**
+ * Someone else's published videos, newest first.
+ *
+ * `publishedOnly` is not a courtesy here — a draft is not yours to see, and the server
+ * decides that. This asks only for what is public.
+ */
+export async function fetchUserVideos(userId: string): Promise<Clip[]> {
+  return (await listVideos({ ownerId: userId, publishedOnly: true })).map(toClip);
 }
 
 /** Everything the acting user owns, drafts included — scoped by the server, not filtered here. */

@@ -16,6 +16,7 @@ import { SafeAreaView } from "react-native-screens/experimental";
 import { openSettings } from "expo-linking";
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
 import type { CameraType, PermissionResponse } from "expo-camera";
+import { beginRecordingMode, endRecordingMode } from "../audioSession";
 import { button, font, isIOS, themedStyles, useTheme } from "../theme";
 import { errorMessage } from "../errors";
 
@@ -142,11 +143,28 @@ export default function CameraScreen({
     setRecording(true);
     setError(null);
     try {
+      /*
+        The session has to be moved before the capture starts.
+
+        app/_layout.tsx configures the process for PLAYBACK at startup, because that is what
+        the feed needs. iOS will not capture the microphone from that category — the attempt
+        fails outright rather than recording silence — so recording is bracketed by a switch
+        into `.playAndRecord` and back.
+
+        Restored in `finally`, and that matters as much as setting it: `.playAndRecord`
+        routes output to the earpiece, so a session left in it makes every clip played
+        afterwards sound quiet and broken, with nothing on screen to explain why.
+      */
+      await beginRecordingMode();
       const r = await cam.current?.recordAsync({ maxDuration: 60 });
       if (r?.uri) onClip(r.uri);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
+      await endRecordingMode().catch(() => {
+        // Nothing useful to say to the user, and the recording itself may well have
+        // succeeded — surfacing this would report a failure that did not happen.
+      });
       setRecording(false);
     }
   }

@@ -8,16 +8,26 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "dev.reellab.spike"
+      "bundleIdentifier": "dev.reellab.spike",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
+        "backgroundColor": "#0E0F12",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "package": "dev.reellab.spike"
+      "package": "dev.reellab.spike",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_MEDIA_VIDEO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -68,6 +78,12 @@
       "expo-router"
     ],
     "newArchEnabled": true,
-    "scheme": "reellab"
+    "scheme": "reellab",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "615b072d-9aec-4561-b8e6-f1be97094256"
+      }
+    }
   }
 }

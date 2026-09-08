@@ -11,11 +11,11 @@
 
 /** ReelLab API. localhost only resolves on the iOS simulator — use the LAN IP on a device. */
 export const API_BASE_URL: string =
-  process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+  process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:3000";
 
 /** Media CDN. Mirrors MEDIA_CDN_BASE_URL on the server. */
 export const MEDIA_BASE_URL: string =
-  process.env.EXPO_PUBLIC_MEDIA_BASE_URL ?? "http://localhost:8080/media";
+  process.env.EXPO_PUBLIC_MEDIA_BASE_URL ?? "http://localhost:3000/media";
 
 
 /** Which env file was picked up, for display on the profile screen. */

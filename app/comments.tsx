@@ -143,6 +143,17 @@ function Comments() {
     }
   }
 
+  /**
+   * A handler for opening one author's profile, or undefined when there is nowhere to go:
+   * your own comment (you are already signed in as them) or an author the server did not
+   * name. Returning undefined is what makes the row render plain text rather than a link
+   * that leads nowhere.
+   */
+  const openAuthor = (authorId: string) =>
+    !authorId || authorId === meId
+      ? undefined
+      : () => router.push({ pathname: "/user", params: { userId: authorId } });
+
   const renderThread: ListRenderItem<Comment> = ({ item: root }) => (
     <View style={s.thread}>
       <CommentRow
@@ -151,6 +162,7 @@ function Comments() {
         replyCount={root.replies.length}
         onEdit={() => startEdit(root, null)}
         onReply={() => startReply(root)}
+        onOpenAuthor={openAuthor(root.authorId)}
         s={s}
       />
       {root.replies.map((reply) => (
@@ -161,6 +173,7 @@ function Comments() {
             comment={reply}
             mine={reply.authorId === meId}
             onEdit={() => startEdit(reply, root)}
+            onOpenAuthor={openAuthor(reply.authorId)}
             s={s}
           />
         </View>
@@ -328,6 +341,7 @@ function CommentRow({
   replyCount,
   onEdit,
   onReply,
+  onOpenAuthor,
   s,
 }: {
   comment: Comment;
@@ -336,20 +350,50 @@ function CommentRow({
   replyCount?: number;
   onEdit: () => void;
   onReply?: () => void;
+  /** Opens this author's profile. Absent on your own comment — you are already there. */
+  onOpenAuthor?: () => void;
   s: ReturnType<typeof useStyles>;
 }) {
   const { type } = useTheme();
 
   return (
     <View style={s.comment}>
-      <Avatar name={comment.authorName} size={36} />
+      {/*
+        The picture and the name are one target, because they are one thing: the person who
+        said this. A comment thread is where you most often meet someone for the first time,
+        and having no way from their name to their profile made them a dead end.
+
+        Their real avatar now, not just an initial — UserResponse carries the URL, so a
+        commenter looks the same here as on their own profile.
+      */}
+      {onOpenAuthor ? (
+        <Pressable
+          onPress={onOpenAuthor}
+          hitSlop={6}
+          accessibilityRole="link"
+          accessibilityLabel={`View ${comment.authorName}'s profile`}
+        >
+          <Avatar uri={comment.authorAvatarUrl} name={comment.authorName} size={36} />
+        </Pressable>
+      ) : (
+        <Avatar uri={comment.authorAvatarUrl} name={comment.authorName} size={36} />
+      )}
 
       <View style={s.commentBody}>
-        <Text style={s.author}>
-          {comment.authorName}
-          {mine ? " (you)" : ""}
-          {comment.edited ? " · edited" : ""}
-        </Text>
+        {onOpenAuthor ? (
+          <Pressable onPress={onOpenAuthor} hitSlop={6} accessibilityRole="link">
+            <Text style={[s.author, s.authorLink]}>
+              {comment.authorName}
+              {comment.edited ? " · edited" : ""}
+            </Text>
+          </Pressable>
+        ) : (
+          <Text style={s.author}>
+            {comment.authorName}
+            {mine ? " (you)" : ""}
+            {comment.edited ? " · edited" : ""}
+          </Text>
+        )}
         {/*
           A React Native <Text> renders its content literally — there is no HTML parser and
           no markdown renderer anywhere in this path — so a body containing <b> or ** shows
@@ -428,6 +472,9 @@ const useStyles = themedStyles(({ c, type }) => ({
     borderLeftColor: c.w18,
   },
   author: { fontFamily: font.sans, fontSize: 12, fontWeight: "500", color: c.w50 },
+  // Brighter than a plain author line, which is how the feed already marks the @handle that
+  // leads to a profile. No underline — none of this app's links carry one.
+  authorLink: { color: c.w70 },
   text: { marginTop: 4 },
   actions: { flexDirection: "row", alignItems: "center", gap: 16, marginTop: 7 },
   action: { fontFamily: font.mono, fontSize: 11, color: c.w38 },

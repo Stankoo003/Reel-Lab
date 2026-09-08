@@ -1,0 +1,59 @@
+# Fly.io deployment for the ReelLab API.
+#
+# Everything secret lives in `fly secrets`, never here — this file is committed, and the
+# database password and JWT signing key are exactly what must not be. See the deploy
+# section of README.md for the list.
+
+app = "reellab-api"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # The reset link and the media URLs the app is handed both have to be reachable from a
+  # phone on the internet, and over HTTPS — iOS refuses cleartext to a public host.
+  PUBLIC_BASE_URL = "https://reellab-api.fly.dev"
+  MEDIA_CDN_BASE_URL = "https://reellab-api.fly.dev/media"
+  MEDIA_STORAGE_DIR = "/data/media"
+  MAIL_PROVIDER = "resend"
+  SPRING_PROFILES_ACTIVE = "prod"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Suspend rather than stop: the machine's memory is snapshotted, so it comes back in
+  # about a second instead of paying a full JVM start. A cold Spring Boot is ~4 seconds,
+  # which a tester reads as the app being broken.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 200
+    soft_limit = 150
+
+# Uploaded video lives here. Without this mount the container filesystem is what holds it,
+# and that is discarded on every deploy — clips uploaded by a tester would vanish the next
+# time anything ships.
+[[mounts]]
+  source = "reellab_media"
+  destination = "/data"
+
+[checks]
+  [checks.health]
+    type = "http"
+    port = 8080
+    path = "/actuator/health"
+    interval = "15s"
+    timeout = "5s"
+    # A JVM plus Flyway migrations. Fly's default is far shorter and would call a healthy
+    # boot a failure.
+    grace_period = "40s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # 256 MB is the free size and Spring Boot does not fit in it once Hibernate and the
+  # connection pool are up. This is the smallest that boots reliably.
+  memory = "512mb"

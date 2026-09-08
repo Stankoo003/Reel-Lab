@@ -1,6 +1,6 @@
 // Design 1c — Editor: timeline + trim / text / audio tabs.
 // The tabs are not a pipeline: they stage parameters, and Export runs one pass.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { View, Text, Pressable, TextInput, ScrollView, StyleSheet, PanResponder } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
 import Animated, { LinearTransition } from "react-native-reanimated";
@@ -36,6 +36,7 @@ import { beginRecordingMode, discardTake, endRecordingMode, keepTake } from "../
 import { errorMessage } from "../errors";
 import InfoNote from "../ui/InfoNote";
 import { MUSIC_CREDIT, MUSIC_TRACKS } from "../assets";
+import { previewTrack, previewingTrack, stopPreview, subscribeToPreview } from "../musicPreview";
 import type { MusicTrack } from "../assets";
 import type { Dispatch, SetStateAction } from "react";
 
@@ -421,6 +422,20 @@ export default function EditorScreen({
     return () => sub.remove();
   }, [player]);
 
+  /*
+   * Which bed is auditioning. The truth lives in src/musicPreview, outside React, because a
+   * preview has to be stoppable by things that are not renders — a five-second timer, a tap
+   * on another row, leaving the screen. This only reads it.
+   */
+  const auditioning = useSyncExternalStore(subscribeToPreview, previewingTrack);
+
+  // Leaving the editor must not leave a bed playing over whatever comes next. The unmount
+  // cleanup is not enough on its own: pushing the export screen keeps this one mounted.
+  useEffect(() => stopPreview, []);
+  useEffect(() => {
+    if (tab !== "audio") stopPreview();
+  }, [tab]);
+
   const duration = clip.duration > 0 ? clip.duration : loadedDuration || 1;
 
   // Frames arrive one at a time, off the JS thread, with progress — see useFilmstrip.
@@ -573,6 +588,9 @@ export default function EditorScreen({
       }
       // The clip keeps playing under a take would be recorded by the mic, so it stops.
       player.pause();
+      // So would an auditioning bed, and that one would end up on the voice track as well
+      // as in the mix — the same music twice, slightly out of step with itself.
+      stopPreview();
       await beginRecordingMode();
       await recorder.prepareToRecordAsync();
       recorder.record();
@@ -621,7 +639,13 @@ export default function EditorScreen({
         <Text style={s.headerTitle} numberOfLines={1}>
           {settings.title.trim() || clip.name}
         </Text>
-        <Pressable onPress={onExport} hitSlop={10}>
+        <Pressable
+          onPress={() => {
+            stopPreview();
+            onExport();
+          }}
+          hitSlop={10}
+        >
           <Text style={s.exportLink}>Export</Text>
         </Pressable>
       </View>
@@ -923,15 +947,23 @@ export default function EditorScreen({
                 return (
                   <Pressable
                     key={track.id}
-                    // Tapping the bed that is already mixed in turns music off — the row is
-                    // both the picker and the toggle, so there is no separate "none" entry.
-                    onPress={() =>
-                      set(
-                        on
-                          ? { music: false }
-                          : { music: true, musicTrackId: track.id }
-                      )
-                    }
+                    /*
+                     * One tap does both: it picks the bed AND plays a few seconds of it.
+                     * Choosing music by reading "Low pulse, 120 bpm" is choosing blind —
+                     * the only honest way to pick a piece of music is to hear it.
+                     *
+                     * Tapping the bed that is already mixed in turns music off, so the row
+                     * is picker, ear and toggle in one and there is no separate "none".
+                     */
+                    onPress={() => {
+                      if (on) {
+                        stopPreview();
+                        set({ music: false });
+                        return;
+                      }
+                      set({ music: true, musicTrackId: track.id });
+                      previewTrack(track.id);
+                    }}
                     style={[s.trackRow, on && s.trackRowOn]}
                   >
                     <View style={s.wave}>
@@ -952,8 +984,18 @@ export default function EditorScreen({
                         {clock(track.seconds)} · {track.blurb} · {fitLabel(track, length)}
                       </Text>
                     </View>
-                    <Text style={[type.badge, { color: on ? c.success : c.w35 }]}>
-                      {on ? "MIXED IN" : "OFF"}
+                    {/*
+                      While a bed is auditioning the badge says so, in the same place the
+                      state normally sits. Without it a tap that makes a sound the phone is
+                      set to silence would look like a tap that did nothing.
+                    */}
+                    <Text
+                      style={[
+                        type.badge,
+                        { color: track.id === auditioning ? c.accent : on ? c.success : c.w35 },
+                      ]}
+                    >
+                      {track.id === auditioning ? "PLAYING" : on ? "MIXED IN" : "OFF"}
                     </Text>
                   </Pressable>
                 );

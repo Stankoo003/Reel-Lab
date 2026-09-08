@@ -1,0 +1,10 @@
+# The build context is sent to the daemon before anything runs, so keeping it small is
+# the difference between a two-second and a two-minute build.
+target/
+.env
+.env.*
+!.env.example
+*.log
+.git/
+.idea/
+.vscode/

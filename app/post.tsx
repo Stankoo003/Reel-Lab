@@ -20,6 +20,7 @@ import { useClips } from "../src/state/ClipsContext";
 import { uploadMedia, createVideo, setVideoPublished } from "../api/client";
 import { toPath } from "../src/assets";
 import { errorMessage } from "../src/errors";
+import { requestFeedRefresh } from "../src/feed/refreshSignal";
 import { probe } from "../src/ffmpeg";
 
 export default function PostRoute() {
@@ -114,6 +115,10 @@ export default function PostRoute() {
         setStage("Publishing…");
         await setVideoPublished(video.id, true);
       }
+
+      // The feed is holding a page fetched before this clip existed. Told rather than
+      // reloaded here: the feed decides when, on its next focus — see refreshSignal.
+      if (published) requestFeedRefresh();
 
       // Land where the result of the action is visible. A draft is only visible in the
       // profile's DRAFTS segment, which is where My videos moved.

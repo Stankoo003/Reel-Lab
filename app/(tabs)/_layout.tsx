@@ -78,6 +78,19 @@ export default function TabsLayout() {
       </NativeTabs.Trigger>
 
       {/*
+        Messages, right of Create. A place you come back to many times a day belongs in the
+        bar rather than two taps inside your own profile — and it is the one tab whose icon
+        can carry a count, which is why it sits where a thumb reaches without moving.
+      */}
+      <NativeTabs.Trigger name="inbox">
+        <NativeTabs.Trigger.Icon
+          sf={{ default: "bubble.left.and.bubble.right", selected: "bubble.left.and.bubble.right.fill" }}
+          md="chat_bubble"
+        />
+        <NativeTabs.Trigger.Label>Inbox</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+
+      {/*
         No "My videos" tab: the design folds the grid into the profile page as a segmented
         section (VIDEOS / LIKED / DRAFTS), so the library is one scroll away from the
         identity it belongs to rather than a peer of the feed.

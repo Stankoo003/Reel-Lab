@@ -1,12 +1,13 @@
 # ReelLab
 
-Expo (SDK 57) video capture and editing client, a Spring Boot API, and a media pipeline.
+Expo (SDK 57) video capture and editing client, a Next.js API (deployable on Vercel's free tier), and a media pipeline.
 
 ```
 app/          expo-router routes — the four top-level areas, plus editor, comments, profile
-api/          typed API client, GENERATED from the backend's OpenAPI contract
+api/          typed API client (schema.d.ts, maintained by hand since the Next.js port)
 src/          feed pager, editor state, theme, FFmpeg wrapper
-server/       Spring Boot API + Postgres   (see server/README.md)
+server/       Next.js API + Postgres       (see server/README.md)
+server-spring/ the previous Spring Boot API, kept as reference — not run
 scripts/media/ encode + upload to R2       (see scripts/media/README.md)
 ```
 
@@ -42,7 +43,7 @@ session survives a restart, and every request carries it — the app no longer t
 who it is, it proves it.
 
 The seeded development accounts are `aleksa@example.com` and `mila@example.com`, both with
-the password **`lozinka123`** (see `server/src/main/resources/db/seed/V900__seed_dev.sql`).
+the password **`lozinka123`** (see `server/db/seed/V900__seed_dev.sql`).
 
 **`localhost` only resolves on the iOS simulator.** A physical device needs this machine's LAN
 IP (currently `192.168.10.207`), or port forwarding on Android.
@@ -71,36 +72,55 @@ npx expo run:ios --device <UDID>
 adb devices                                  # enable USB debugging on the phone first
 npx expo run:android --device <serial>
 adb reverse tcp:8081 tcp:8081                # Metro
-adb reverse tcp:8080 tcp:8080                # API, if you prefer localhost to the LAN IP
+adb reverse tcp:3000 tcp:3000                # API, if you prefer localhost to the LAN IP
 ```
 
-With `adb reverse` in place you can leave `EXPO_PUBLIC_API_BASE_URL=http://localhost:8080`;
+With `adb reverse` in place you can leave `EXPO_PUBLIC_API_BASE_URL=http://localhost:3000`;
 otherwise use the LAN IP. The emulator behaves the same way.
 
 > **Not verified on a physical Android device.** Everything Android in this repo has been run on
 > an emulator (Pixel 9a, API 36). The steps above are the standard ones but have not been
 > exercised here.
 
+## TestFlight
+
+Two prerequisites, and neither is skippable. The API must be **deployed and reachable over
+HTTPS** — iOS ATS refuses cleartext to a public host, so a build pointed at a LAN address is
+an app that cannot reach its own backend. And the Apple account must be in the **paid
+Developer Program**; a personal team can sign a build for your own phone and nothing else.
+
+Server side: `server/README.md`. App side:
+
+```bash
+eas login
+eas init                                          # writes extra.eas.projectId into app.json
+eas build --platform ios --profile production
+eas submit --platform ios --profile production
+```
+
+`eas.json` carries the production URLs in the profile's `env` block rather than in
+`.env.production`. That is deliberate: `.env*` is gitignored, so a cloud build never receives
+it, and a build that silently falls back to the development URL is the failure this avoids.
+
+Before the first `submit`, the app must exist in App Store Connect — *My Apps → +* with the
+bundle identifier `dev.reellab.spike`. `eas submit` can create it, but doing it by hand once
+means the name and the SKU are yours rather than generated.
+
+`usesNonExemptEncryption: false` in `app.json` answers the export-compliance question up
+front. Without it every single build stops in App Store Connect and waits to be asked about
+encryption, which it only uses through HTTPS.
+
+Build numbers come from EAS, not the repo — `appVersionSource: "remote"` with
+`autoIncrement`. `version` in `app.json` is still yours to bump when the release deserves it.
+
 ## Typed API client
 
-`api/schema.d.ts` is **generated** from the backend's own `/v3/api-docs` and committed, so a
-fresh clone typechecks without a running server. Regenerate after any controller or DTO change:
-
-```bash
-# In another terminal. JAVA_HOME and .env are both required: the project targets Java 21,
-# and application.yml gives POSTGRES_DB/USER/PASSWORD no defaults on purpose.
-cd server
-export JAVA_HOME=$(/usr/libexec/java_home -v 21)
-set -a; . ./.env; set +a
-SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
-```
-```bash
-npm run api:generate
-npm run typecheck
-```
-
-This is the point of generating rather than hand-writing: rename a field on the server and
-`tsc` fails with *"Did you mean 'manifestURI'?"* instead of the app breaking on a device.
+`api/schema.d.ts` was generated from the Spring backend's `/v3/api-docs` and is now
+**maintained by hand**: the Next.js server has no OpenAPI endpoint, and `npm run api:generate`
+(`scripts/api/generate-client.sh`) only works against `server-spring/`. When an endpoint in
+`server/app/api/` changes shape, edit the matching `paths` / `components.schemas` entry and run
+`npm run typecheck` — a field the app reads that the server no longer sends fails there rather
+than on a device.
 
 The whole app is TypeScript — `tsconfig.json` typechecks `api/`, `app/` and `src/` under
 `strict`, so `npm run typecheck` covers the screens as well as the generated client.
@@ -222,25 +242,18 @@ Content-Type the client declares, and capped at 512KB separately from the 256MB 
 
 ## Test
 
-```bash
-cd server
-export JAVA_HOME=$(/usr/libexec/java_home -v 21)
-./mvnw test
-```
-
-Needs a **Docker daemon and nothing else** — no `docker compose`, no `.env`, no `POSTGRES_*`.
-Testcontainers starts `postgres:17-alpine` (the same major version compose runs) and
-`@ServiceConnection` supplies the datasource, so Flyway migrations and `ddl-auto: validate` are
-exercised against a throwaway database each build. Uploads go to a `@TempDir`, so a test run
-never writes into the repository.
+The Next.js server has no automated tests yet; `server/README.md` lists the curl checks that
+were run against every endpoint. The Spring test suite still lives in `server-spring/` and
+runs there with `./mvnw test` (Docker required).
 
 ## Posting a clip from the app
 
 `Create → editor → Export → **Post**`. The Post screen takes a title, an optional
 description and a publish toggle, then:
 
-1. uploads the exported video to `POST /api/media` (`kind=video`)
-2. uploads a poster generated from that same export (`kind=poster`)
+1. asks `POST /api/media?kind=video` where to put the exported video, and PUTs the bytes
+   straight to the signed URL it answers with (R2 deployed, the API's own disk locally)
+2. does the same for a poster generated from that same export (`kind=poster`)
 3. creates the record with `POST /api/videos` using the returned **relative** paths
 4. flips `published` if the toggle is on
 
@@ -249,16 +262,18 @@ server, exactly as for seeded clips.
 
 ### Uploading files from React Native 0.86 — read this before changing it
 
-`/api/media` takes **one file per request** and a `kind` parameter. That looks odd until
-you try the alternatives; both JS routes fail on this runtime:
+`/api/media` is asked about **one file per request** with a `kind` parameter, and the bytes
+are PUT with the native uploader (`UploadType.BINARY_CONTENT`). That looks odd until you try
+the alternatives; both JS routes fail on this runtime:
 
 | Approach | Result |
 |---|---|
 | `form.append("video", { uri, name, type })` | `Unsupported FormDataPart implementation` |
 | `form.append("video", new File(uri).slice(...))` | `Creating blobs from 'ArrayBuffer' and 'ArrayBufferView' are not supported` |
-| `new File(uri).upload(url, { uploadType: MULTIPART, … })` | **works** |
+| `new File(uri).upload(url, { uploadType: BINARY_CONTENT, httpMethod: "PUT" })` | **works** |
 
 The native uploader in `expo-file-system` is the only one that works, and it sends a
-single file per call — so the endpoint is shaped around that rather than fighting it.
-Where uploads land is `reellab.media.storage.directory` (defaults to the repo's `media/`,
-which the local media host serves, so an upload is playable immediately).
+single file per call — so the endpoint is shaped around that rather than fighting it. The
+server never receives the bytes itself: a Vercel function accepts ~4.5MB of body and a clip is
+up to 256MB, which is why it signs an upload URL instead. Locally uploads land in
+`MEDIA_STORAGE_DIR` (the repo's `media/`), served by the API at `/media/**`.

@@ -182,7 +182,222 @@ export async function unlikeVideo(videoId: string): Promise<LikeState> {
   return toLikeState(unwrap(result, "Unlike"));
 }
 
+/** One row of a people list — what search returns. */
+export type UserSummary = components["schemas"]["UserSummaryResponse"];
+
+/**
+ * Find people by handle or display name.
+ *
+ * An empty query is answered here rather than on the server: a search box that has been
+ * cleared has nothing to ask, and the round trip would only arrive to be discarded.
+ */
+export async function searchUsers(query: string, signal?: AbortSignal): Promise<UserSummary[]> {
+  if (!query.trim()) return [];
+  const result = await api.GET("/api/users/search", {
+    params: { query: { q: query } },
+    // Typing the next letter makes the previous request pointless. Without this, answers
+    // race and the list can settle on the results for a prefix the user has moved past.
+    signal,
+  });
+  return unwrap(result, "Search");
+}
+
+/**
+ * Ask for a reset link.
+ *
+ * Resolves the same way for an address with an account and one without — that is the
+ * server's whole design, and the app must not undo it by treating the two differently. The
+ * only failure that reaches here is a rate limit (429) or a malformed address.
+ */
+export async function requestPasswordReset(email: string): Promise<string> {
+  const result = await api.POST("/api/auth/password/reset-request", { body: { email } });
+  return unwrap(result, "Reset request").message ?? "";
+}
+
+/**
+ * Change the password while signed in.
+ *
+ * The answer is a fresh session, not a message: the change retires every token issued
+ * before it, this request's included, so the caller has to adopt the new one or find
+ * itself signed out by its own success.
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<Authenticated> {
+  const result = await api.POST("/api/auth/password/change", {
+    body: { currentPassword, newPassword },
+  });
+  const data = unwrap(result, "Change password");
+  return { token: data.token ?? "", user: data.user ?? ({} as UserResponse) };
+}
+
+/** Spend a reset token. The server answers with a message, not a session — you sign in after. */
+export async function resetPassword(token: string, newPassword: string): Promise<string> {
+  const result = await api.POST("/api/auth/password/reset", { body: { token, newPassword } });
+  return unwrap(result, "Reset password").message ?? "";
+}
+
+// --- direct messages ---------------------------------------------------------------
+
+export type Conversation = components["schemas"]["ConversationResponse"];
+export type DirectMessage = components["schemas"]["MessageResponseDto"];
+export type MessagePage = components["schemas"]["MessagePageResponse"];
+/** How far one participant has received and read a thread — what the ticks are drawn from. */
+export type Receipt = components["schemas"]["ReceiptResponse"];
+
+export async function fetchConversations(): Promise<Conversation[]> {
+  return unwrap(await api.GET("/api/conversations"), "Conversations");
+}
+
+/** Start or find the thread with one person. Refused if either has blocked the other. */
+export async function openConversation(userId: string): Promise<Conversation> {
+  return unwrap(await api.POST("/api/conversations", { body: { userId } }), "Open conversation");
+}
+
+/** One page of history, newest first. `cursor` comes from the previous page. */
+export async function fetchMessages(
+  conversationId: string,
+  cursor?: string | null,
+  limit = 30
+): Promise<MessagePage> {
+  const result = await api.GET("/api/conversations/{id}/messages", {
+    params: { path: { id: conversationId }, query: { cursor: cursor ?? undefined, limit } },
+  });
+  return unwrap(result, "Messages");
+}
+
+/**
+ * What arrived after a moment — the reconnect reconciliation.
+ *
+ * A socket that was down delivered nothing while it was down, and cannot say so. Rather than
+ * trusting the live stream to have been complete, the thread asks what it missed.
+ */
+export async function fetchMessagesSince(
+  conversationId: string,
+  after: string
+): Promise<DirectMessage[]> {
+  const result = await api.GET("/api/conversations/{id}/messages/since", {
+    params: { path: { id: conversationId }, query: { after } },
+  });
+  return unwrap(result, "Missed messages");
+}
+
+/** Everything new in a thread since a moment: messages, and how far the other side has read. */
+export type ConversationUpdates = { messages: DirectMessage[]; otherReceipt: Receipt | null };
+
+/**
+ * What a polling client asks every few seconds. One round trip carries both the messages after
+ * `after` and the other participant's receipt — the two things a STOMP topic used to push.
+ */
+export async function fetchConversationUpdates(
+  conversationId: string,
+  after: string | null
+): Promise<ConversationUpdates> {
+  const result = await api.GET("/api/conversations/{id}/updates", {
+    params: { path: { id: conversationId }, query: { after: after ?? undefined } },
+  });
+  const page = unwrap(result, "Updates");
+  return { messages: page.messages ?? [], otherReceipt: page.otherReceipt ?? null };
+}
+
+/**
+ * Send over HTTP.
+ *
+ * The queue retries through here rather than over the socket: an HTTP call has a status code,
+ * so "did it arrive" is answerable. A frame written into a socket that is quietly dead is not.
+ */
+export async function sendMessage(
+  conversationId: string,
+  body: string,
+  clientId: string,
+  /** A published clip to share into the thread. The body may then be empty. */
+  videoId?: string
+): Promise<DirectMessage> {
+  const result = await api.POST("/api/conversations/{id}/messages", {
+    params: { path: { id: conversationId } },
+    body: { body, clientId, videoId },
+  });
+  return unwrap(result, "Send");
+}
+
+/** A clip as it sits inside a message: enough to draw the card and to play it. */
+export type SharedVideo = components["schemas"]["SharedVideoDto"];
+
+/** Opening a thread reads it to the end. */
+export async function markConversationRead(conversationId: string): Promise<void> {
+  await api.POST("/api/conversations/{id}/read", {
+    params: { path: { id: conversationId } },
+  });
+}
+
+/**
+ * The thread reached this device without being opened — the second tick for the sender.
+ *
+ * Opening the thread reads it, and reading implies delivery, so the thread screen never
+ * calls this; the inbox does, for everything it has just listed.
+ */
+export async function markConversationDelivered(conversationId: string): Promise<Receipt> {
+  const result = await api.POST("/api/conversations/{id}/delivered", {
+    params: { path: { id: conversationId } },
+  });
+  return unwrap(result, "Delivered");
+}
+
+/** Every thread at once. Returns only the receipts that moved. */
+export async function markAllConversationsDelivered(): Promise<Receipt[]> {
+  return unwrap(await api.POST("/api/conversations/delivered"), "Delivered");
+}
+
+/**
+ * These answer 204, so there is no body for `unwrap` to hand back — its "no data means it
+ * failed" rule would turn every success into an error. The status is the whole answer.
+ */
+function throwIfFailed(result: { error?: unknown; response: Response }, what: string): void {
+  if (result.error !== undefined || !result.response.ok) {
+    const problem = (result.error ?? {}) as { detail?: string; errors?: FieldErrors };
+    const detail = problem.detail ?? `HTTP ${result.response.status}`;
+    throw new ValidationError(`${what} failed: ${detail}`, problem.errors ?? {});
+  }
+}
+
+export async function blockUser(userId: string): Promise<void> {
+  throwIfFailed(
+    await api.PUT("/api/users/{id}/block", { params: { path: { id: userId } } }), "Block");
+}
+
+export async function unblockUser(userId: string): Promise<void> {
+  throwIfFailed(
+    await api.DELETE("/api/users/{id}/block", { params: { path: { id: userId } } }), "Unblock");
+}
+
+export async function reportMessage(messageId: string, reason?: string): Promise<void> {
+  throwIfFailed(await api.POST("/api/messages/{id}/report", {
+    params: { path: { id: messageId } },
+    body: { reason },
+  }), "Report");
+}
+
 export type Profile = components["schemas"]["ProfileResponse"];
+
+/** The state of one user's follows after a change — what a Follow button settles on. */
+export type FollowState = components["schemas"]["FollowResponse"];
+
+/**
+ * Follow and unfollow.
+ *
+ * PUT and DELETE, and idempotent both ways, exactly like a like: the button flips before
+ * the server has answered, so it has to be safe to press twice or replay on a retry.
+ */
+export async function followUser(userId: string): Promise<FollowState> {
+  const result = await api.PUT("/api/users/{id}/follow", { params: { path: { id: userId } } });
+  return unwrap(result, "Follow");
+}
+
+export async function unfollowUser(userId: string): Promise<FollowState> {
+  const result = await api.DELETE("/api/users/{id}/follow", { params: { path: { id: userId } } });
+  return unwrap(result, "Unfollow");
+}
 
 export async function getProfile(userId: string): Promise<Profile> {
   const result = await api.GET("/api/users/{id}/profile", { params: { path: { id: userId } } });
@@ -207,13 +422,22 @@ export class ValidationError extends Error {
   }
 }
 
-export type ProfileEdit = { displayName: string; bio?: string | null; avatarPath?: string | null };
+export type ProfileEdit = {
+  displayName: string;
+  /** The person's real name. "" clears it; undefined leaves it alone. */
+  fullName?: string | null;
+  bio?: string | null;
+  avatarPath?: string | null;
+};
 
 export async function updateProfile(userId: string, edit: ProfileEdit): Promise<Profile> {
   const result = await api.PATCH("/api/users/{id}", {
     params: { path: { id: userId } },
     body: {
       displayName: edit.displayName,
+      // `?? undefined` maps null to "leave it alone" — an empty STRING is what clears a
+      // field, and the two must not collapse into each other on the way out.
+      fullName: edit.fullName ?? undefined,
       bio: edit.bio ?? undefined,
       avatarPath: edit.avatarPath ?? undefined,
     },
@@ -294,42 +518,44 @@ export async function getHealth(): Promise<Health> {
 /**
  * Upload one file and get back its relative path.
  *
- * Uses expo-file-system's NATIVE uploader rather than fetch + FormData. Both JS routes
- * fail on RN 0.86: a {uri,name,type} part is rejected as "Unsupported FormDataPart
- * implementation", and a Blob from File.slice() as "Creating blobs from ArrayBuffer ...
- * not supported". The native uploader sends one file per request, which is why the
- * endpoint takes a `kind` instead of both parts at once.
+ * Two steps. The server does not accept the bytes itself — a serverless function takes a few
+ * megabytes of body and a clip is hundreds — so it is asked where to put them: POST /api/media
+ * answers with the path it chose and a signed PUT URL (Cloudflare R2 deployed, the API's own
+ * disk in development). The bytes then go straight there with expo-file-system's NATIVE
+ * uploader, which is the one upload route that works on RN 0.86 — see uploadMedia's history.
+ * The path is what POST /api/videos and PATCH /api/users/{id} take; they verify what landed.
  */
 async function uploadOne(
   uri: string,
   kind: "video" | "poster" | "avatar",
   mimeType: string
 ): Promise<string> {
-  // The header is set by hand here. This call does not go through openapi-fetch — it hands
-  // the file to the platform's own uploader — so the middleware above never sees it, and
-  // uploading is one of the endpoints that requires a token.
-  const token = getToken();
-  const result = await new FSFile(uri).upload(`${API_BASE_URL.replace(/\/$/, "")}/api/media`, {
-    httpMethod: "POST",
-    uploadType: UploadType.MULTIPART,
-    fieldName: "file",
+  const file = new FSFile(uri);
+  const size = file.size ?? 0;
+  const presigned = await api.POST("/api/media", {
+    params: { query: { kind } },
+    body: { contentType: mimeType, size },
+  });
+  const target = unwrap(presigned, `Upload (${kind})`);
+  if (!target.path || !target.uploadUrl) throw new Error(`Upload (${kind}) returned no destination`);
+
+  const result = await file.upload(target.uploadUrl, {
+    httpMethod: "PUT",
+    uploadType: UploadType.BINARY_CONTENT,
     mimeType,
-    parameters: { kind },
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    headers: target.headers ?? { "Content-Type": mimeType },
   });
   if (result.status < 200 || result.status >= 300) {
-    // The server explains why — wrong type, too large — and that reason is worth showing.
+    // Storage explains why — a signature that expired, a size that did not match.
     let detail = `HTTP ${result.status}`;
     try {
       detail = (JSON.parse(result.body) as { detail?: string }).detail ?? detail;
     } catch {
-      // non-JSON body; the status is all there is
+      // non-JSON body (R2 answers with XML); the status is all there is
     }
     throw new Error(`Upload (${kind}) failed: ${detail}`);
   }
-  const parsed = JSON.parse(result.body) as { path?: string };
-  if (!parsed.path) throw new Error(`Upload (${kind}) returned no path`);
-  return parsed.path;
+  return target.path;
 }
 
 /** Upload the exported video and its poster; returns the relative paths. */

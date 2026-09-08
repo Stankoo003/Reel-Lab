@@ -34,6 +34,13 @@ export type Clip = {
   /** Server clips only. Local clips have no likes because they have no server row. */
   likeCount?: number;
   likedByViewer?: boolean;
+  /**
+   * Whether the viewer follows this clip's owner — what the feed's Following label reads.
+   *
+   * Carried on the clip rather than looked up per author, because the server answers it for
+   * a whole page in one query; asking per row is one request per video.
+   */
+  ownerFollowedByViewer?: boolean;
 };
 
 /** Keys of MUSIC_TRACKS in src/assets.ts — which bundled bed to mix in. */

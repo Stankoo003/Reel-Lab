@@ -11,6 +11,8 @@ export type Comment = {
   id: string;
   authorId: string;
   authorName: string;
+  /** Absolute URL, or null when they have not set a picture. */
+  authorAvatarUrl: string | null;
   /** Plain text. Rendered inside <Text>, which never interprets markup. */
   body: string;
   createdAt: string;
@@ -33,6 +35,7 @@ function toComment(c: CommentResponse): Comment {
     id: c.id ?? "",
     authorId: c.author?.id ?? "",
     authorName: c.author?.displayName ?? c.author?.username ?? "unknown",
+    authorAvatarUrl: c.author?.avatarUrl ?? null,
     body: c.body ?? "",
     createdAt,
     updatedAt,
